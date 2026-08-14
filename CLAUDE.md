@@ -91,10 +91,11 @@ production `https://respondly-delta.vercel.app`, region `lhr1` (see `vercel.json
 so the DNS record, the proxy toggle and the SSL/TLS mode in front of
 `respondly.littlebigapps.io` are all decided there, not on Vercel.
 
-- **Always reach Cloudflare through the `cloudflare-lba` MCP** (`.mcp.json`, project
-  scope). It is authed as the Little Big Apps Cloudflare account, which owns this zone.
-  Never substitute the global `cloudflare-api` connection, a hand-held API token, or the
-  dashboard-by-instructions — a different account manages the hotel's own domains.
+- **Always reach Cloudflare through the `cloudflare-lba` MCP** — user scope, like
+  `vercel-lba` and `supabase-lba`, so it is there from any directory. It is authed as the
+  Little Big Apps Cloudflare account, which owns this zone. Never substitute the global
+  `cloudflare-api` connection, a hand-held API token, or the dashboard-by-instructions —
+  a different account manages the hotel's own domains.
 - If `cloudflare-lba` is missing or unauthenticated, say so and stop rather than falling
   back to another route.
 - DNS, SSL mode and cache rules are outward-facing: confirm before changing one, and say
