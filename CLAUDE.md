@@ -57,14 +57,33 @@ react-hook-form + zod · @tanstack/react-query · sonner · next-themes · npm.
 
 ## Hosting / Vercel
 
-- **Always reach Vercel through the `vercel-lba` MCP** — projects, deployments, logs,
-  env vars, analytics, docs lookups. It is authed as the **Little Big Apps** team, which
-  owns this project. Never substitute the `vercel` CLI, the REST API with a hand-held
-  token, or another Vercel MCP connection.
-- If `vercel-lba` is missing or unauthenticated, say so and stop. Do not fall back to
-  another route — a different account or team would act on the wrong projects.
-- The connection carries full account rights (delete deployments, change settings), so
-  confirm before anything destructive or outward-facing.
+The project lives at **little-big-apps/respondly** (`prj_tnY9Rs3vuEPxLUJLDPzyPDLHL8Mb`),
+production `https://respondly-delta.vercel.app`, region `lhr1` (see `vercel.json`).
+
+- **Prefer the `vercel-lba` MCP** when it is connected — projects, deployments, logs, env
+  vars, analytics. It is authed as the Little Big Apps team, which owns this project.
+- **Otherwise use the CLI with this project's own credential store.** The machine's
+  default `vercel` login is a *different* account (`emirerdo`, team `my-dora`, which owns
+  the hotel's own site and dashboard). The CLI keeps one session per config directory, so
+  this project gets its own:
+
+  ```bash
+  vercel --global-config ~/.vercel-lbapps <command>   # signed in as Little Big Apps
+  ```
+
+  Worth an alias: `alias vercel-lb='vercel --global-config ~/.vercel-lbapps'`. Check who
+  you are before acting: `vercel --global-config ~/.vercel-lbapps whoami` must print
+  `infolittlebigapps-…`, and `teams ls` must show `little-big-apps`.
+
+- **Never run a bare `vercel` command against this repo.** It resolves to the other
+  account, and `link`, `env` and `deploy` would all act on the wrong projects. Same for a
+  hand-held `--token` unless it came from the Little Big Apps account.
+- Env vars: `./scripts/vercel-env.sh .env.local production` uploads a filled-in local env
+  file in one pass. Secrets are never committed and never pasted into a chat — they go
+  from that file to Vercel and nowhere else. `NEXT_PUBLIC_*` are inlined at build time, so
+  a variable added after a build only takes effect on the next deployment.
+- The account carries full rights (delete deployments, change domains), so confirm before
+  anything destructive or outward-facing.
 
 ## Hard rules
 
