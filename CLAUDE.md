@@ -85,6 +85,25 @@ production `https://respondly-delta.vercel.app`, region `lhr1` (see `vercel.json
 - The account carries full rights (delete deployments, change domains), so confirm before
   anything destructive or outward-facing.
 
+## DNS / CDN — Cloudflare
+
+`littlebigapps.io` sits on Cloudflare (nameservers `margaret`/`wells.ns.cloudflare.com`),
+so the DNS record, the proxy toggle and the SSL/TLS mode in front of
+`respondly.littlebigapps.io` are all decided there, not on Vercel.
+
+- **Always reach Cloudflare through the `cloudflare-lba` MCP** (`.mcp.json`, project
+  scope). It is authed as the Little Big Apps Cloudflare account, which owns this zone.
+  Never substitute the global `cloudflare-api` connection, a hand-held API token, or the
+  dashboard-by-instructions — a different account manages the hotel's own domains.
+- If `cloudflare-lba` is missing or unauthenticated, say so and stop rather than falling
+  back to another route.
+- DNS, SSL mode and cache rules are outward-facing: confirm before changing one, and say
+  which zone and record you are about to touch.
+- Known trap, already paid for once: a proxied record with SSL/TLS mode **Flexible** makes
+  Cloudflare fetch the Vercel origin over HTTP, Vercel answers 308 to HTTPS, and Cloudflare
+  repeats the same HTTP request — `ERR_TOO_MANY_REDIRECTS` on a deployment that is
+  perfectly healthy. The mode belongs on **Full (strict)**.
+
 ## Hard rules
 
 - **UI: shadcn/ui only**, per official docs. Use the `shadcn` MCP/skill to fetch component
