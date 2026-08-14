@@ -10,6 +10,8 @@ OpenRouter · Meta WhatsApp Cloud API.
 
 ## Geliştirme
 
+Node 24 (Vercel'in çalıştırdığı sürüm; `package.json` → `engines`).
+
 ```bash
 npm install
 cp .env.example .env.local   # sonra değerleri doldur
