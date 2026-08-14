@@ -1,50 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Respondly
 
-## Getting Started
+İşletmeler için WhatsApp yönetim sistemi. İşletme kendi WhatsApp numarasını bağlar;
+Respondly müşteri konuşmalarını yürütür — bilgi kütüphanesinden yanıtlar, işletmenin
+bağladığı MCP sunucularından canlı veri çeker, gerektiğinde insana devreder.
 
-First, run the development server:
+Next.js 16 (App Router, RSC) · React 19 · TypeScript · Tailwind v4 · shadcn/ui ·
+Supabase (Postgres + pgvector + Storage + Realtime + Vault) · Mastra (asistan motoru) ·
+OpenRouter · Meta WhatsApp Cloud API.
+
+## Geliştirme
 
 ```bash
+npm install
+cp .env.example .env.local   # sonra değerleri doldur
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```bash
+npm run test        # birim testleri (node:test)
+npx tsc --noEmit    # tip kontrolü
+npm run lint
+npm run build
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Ortam değişkenleri
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Tam liste ve açıklamalar `.env.example` içinde. Zorunlu olanlar:
 
-## WhatsApp ortam değişkenleri
+| Değişken | Ne işe yarar |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase proje adresi (istemci + sunucu). |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Tarayıcı istemcisi. Sınır RLS'tir, bu anahtar herkese açıktır. |
+| `SUPABASE_SERVICE_ROLE_KEY` | RLS'i aşan sunucu istemcisi. Asla istemciye sızmamalı. |
+| `APP_URL` | Uygulamanın **genel** adresi, sonunda eğik çizgi yok. Meta webhook adresi ve davet bağlantıları buradan üretilir. |
+| `CRON_SECRET` | Bilgi kütüphanesi cron uçlarının paylaşılan sırrı (`Authorization: Bearer …`). |
+| `OPENROUTER_API_KEY` | Her model çağrısı. |
+| `WHATSAPP_APP_SECRET` | Gelen webhook imzasının (`X-Hub-Signature-256`) doğrulanması. |
+| `WHATSAPP_VERIFY_TOKEN` | Meta'nın webhook doğrulama handshake'i. |
+| `RESEND_API_KEY` | Davet ve hesap e-postaları. |
 
-`.env.local` içinde tanımlanır. Kanala özel kimlik bilgileri (Phone Number ID,
-WABA ID, access token) buraya değil, dashboard'daki **WhatsApp → Bağlantı**
-sekmesine girilir; access token Supabase Vault'ta saklanır.
+Kanala özel WhatsApp kimlik bilgileri (Phone Number ID, WABA ID, access token) ortam
+değişkeni **değildir**: dashboard'da **WhatsApp → Bağlantı** sekmesinden girilir, access
+token Supabase Vault'ta saklanır.
 
-| Değişken | Zorunlu | Ne işe yarar |
-|---|---|---|
-| `WHATSAPP_APP_SECRET` | evet | Gelen webhook imzasının (`X-Hub-Signature-256`) doğrulanması. |
-| `WHATSAPP_VERIFY_TOKEN` | evet | Meta'nın webhook doğrulama handshake'i. |
-| `WHATSAPP_GRAPH_VERSION` | hayır | Graph API sürümü. Varsayılan `v25.0`. |
-| `WHATSAPP_APP_ID` | hayır | Profil fotoğrafı yüklemek için kullanılan Resumable Upload API'nin app id'si. Sadece varsayılan olarak kullanılır: önce kanalın `wa_app_id` alanına, o da boşsa buraya, o da boşsa access token'dan otomatik keşfe bakılır. |
-| `APP_URL` | evet | Meta'ya verilecek webhook callback adresinin kökü. |
+## Vercel'e dağıtım
 
-## Learn More
+1. **Projeyi bağla.** Vercel → Add New → Project → bu repo. Framework `Next.js`,
+   build komutu varsayılan. `vercel.json` bölgeyi `lhr1`'e sabitliyor: Supabase projesi
+   `eu-west-2`'de, her istek turunda birkaç veritabanı gidiş-dönüşü var, fonksiyonun
+   veritabanının yanında çalışması gecikmeyi doğrudan düşürüyor.
+2. **Ortam değişkenlerini gir.** `.env.example`'daki her zorunlu adı Production (ve
+   istersen Preview) ortamına ekle. `APP_URL` üretim alan adın olmalı — `vercel.app`
+   adresi veya bağladığın kendi alan adın.
+3. **Dağıt.** Uzun iş yapan uçlar (`/api/whatsapp/webhook`, `/api/assistant/chat`,
+   `/api/cron/*`) kendi `maxDuration = 60` değerlerini kodda taşıyor; Vercel bunu
+   dosyadan okur, ayrıca ayar gerekmez.
+4. **Meta webhook'unu güncelle.** Meta App → WhatsApp → Configuration → Callback URL:
+   `https://<alan-adın>/api/whatsapp/webhook`, Verify token = `WHATSAPP_VERIFY_TOKEN`.
+   Dashboard'daki WhatsApp → Bağlantı sekmesi bu adresi `APP_URL`'den üretip gösterir.
+5. **Supabase Vault'taki `app_url`'i güncelle.** Bilgi kütüphanesi cron'ları Vercel'de
+   değil, Supabase'de `pg_cron` ile çalışıyor (`trigger_knowledge_refresh`,
+   `trigger_knowledge_ingest_sweep`) ve adresi Vault'tan okuyor. Dağıtımdan sonra:
 
-To learn more about Next.js, take a look at the following resources:
+   ```sql
+   select vault.update_secret(
+     (select id from vault.secrets where name = 'app_url'),
+     'https://<alan-adın>'
+   );
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+   `knowledge_cron_secret` ile Vercel'deki `CRON_SECRET` **aynı değer** olmalı.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Cron'lar bilerek `vercel.json`'a konmadı: aynı işi iki zamanlayıcı tetiklerse her tur
+iki kez koşar.
 
-## Deploy on Vercel
+### Dağıtım sonrası kontrol listesi
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `https://<alan-adın>/login` açılıyor.
+- Meta'da webhook doğrulaması yeşil; test mesajı gelen kutusuna düşüyor.
+- Bir konuşmada asistan yanıt veriyor (OpenRouter anahtarı çalışıyor).
+- `select * from cron.job_run_details order by start_time desc limit 5;` — cron'lar
+  2xx dönüyor (localhost'a gitmiyor).
+- Davet e-postası ulaşıyor (Resend alan adı doğrulanmış olmalı).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Bilinen sınırlar
+
+- **Crawl4AI** yalnız `CRAWL4AI_BASE_URL` **dağıtımdan erişilebilir** bir adresse çalışır.
+  Docker'ı kendi makinende çalıştırıyorsan Vercel oraya ulaşamaz; değişkeni boş bırak,
+  tek sayfa çıkarma çalışmaya devam eder.
+- Asistan turu webhook yanıtından sonra `after()` içinde sürüyor ve fonksiyonun 60 sn'lik
+  tavanına dahil. Çok araç çağıran uzun bir tur bu tavana yaklaşırsa devir mesajına düşer.

@@ -1129,3 +1129,55 @@ yani her kart için onlarca megapiksel indiriliyor. Meta'ya giden kopya
 `image-normalize` sayesinde küçülüyor ama panelin gördüğü ham dosya. Ayrı iş:
 panelde bir görsel proxy'si (boyutlandırma + tek origin) hem bunu hem hotlink
 sorununu kökten kapatır.
+
+---
+
+# Vercel'e hazırlık (2026-08-14)
+
+Proje `Projects/MyDora/Respondly` → `Projects/LittleBigApps/Respondly` taşınmış ve git
+repo'suna alınmış (`d08b878 Initial commit`). Aşağıdakiler yeni konumda yapıldı.
+
+## Eklendi
+
+- [x] `.env.example` — 18 değişkenin tamamı, zorunlu/opsiyonel ayrımı ve nereden alınacağı
+      yazılı. `.gitignore` zaten `.env.*`'ı kesip `!.env.example`'a izin veriyor.
+- [x] `vercel.json` — `regions: ["lhr1"]`. Supabase `eu-west-2`'de; her istek turunda
+      birkaç DB gidiş-dönüşü var, fonksiyonu veritabanının yanına koymak gecikmeyi
+      doğrudan düşürüyor. **Cron bilerek konmadı:** işi Supabase `pg_cron` tetikliyor,
+      ikinci bir zamanlayıcı her turu iki kez koşturur.
+- [x] `package.json` → `engines.node: "22.x"`.
+- [x] README baştan yazıldı: create-next-app kalıntısı gitti; ortam değişkeni tablosu,
+      adım adım Vercel dağıtımı, Meta webhook adresi, Vault `app_url` güncellemesi,
+      dağıtım sonrası kontrol listesi ve bilinen sınırlar.
+- [x] `src/lib/supabase/client.ts` — eksik `NEXT_PUBLIC_*` için **hangi değişkenin**
+      eksik olduğunu ve nereye konacağını söyleyen hata. Kütüphanenin kendi mesajı
+      ("URL and API key are required") ne değişkeni ne de yeri söylüyordu; build
+      prerender sırasında bununla patlıyor.
+- [x] `public/images/logo-dark.png` — **gerçek bir üretim hatası**: davet e-postası
+      `${APP_URL}/images/logo-dark.png` istiyordu ama `public/images/` hiç yoktu.
+      Dağıtımdan sonra her davet e-postasında logo kırık gelecekti.
+
+## Zaten hazırdı
+
+Uzun iş yapan uçlar `runtime = "nodejs"` + `maxDuration = 60` taşıyor (webhook, asistan
+sohbeti, üç cron ucu). `serverExternalPackages: ["@mastra/mcp"]` yerinde. `sharp` doğrudan
+bağımlılık. epub çıkarımı `os.tmpdir()` kullanıyor (Vercel'de yazılabilir).
+
+## Doğrulama
+
+`tsc` temiz · **382/382 test** · `npm run build` iki public değişken verilince **başarılı**
+(prerender edilen `/signup`, `/login`, `/reset-password` dahil).
+
+## Dağıtımdan önce/sonra yapılacaklar (kod değil, ayar)
+
+1. **`.env.local` taşınma sırasında kayboldu** — eski klasörde de yok. Değerler yeniden
+   toplanmalı: Supabase (proje ayarları), OpenRouter, Meta (app secret + verify token),
+   Resend. `CRON_SECRET` Vault'taki `knowledge_cron_secret` ile aynı olmalı; o değer
+   Vault'ta duruyor.
+2. Vercel'de aynı adlar Production ortamına girilmeli. `APP_URL` = üretim alan adı.
+3. **Supabase Vault `app_url` hâlâ `http://localhost:3000`.** Cron'lar oraya POST ediyor,
+   yani bilgi kütüphanesi yenileme/ingest üretimde hiç çalışmayacak. Dağıtımdan sonra
+   `vault.update_secret` ile alan adına çevrilmeli (SQL README'de).
+4. Meta webhook callback URL'i yeni alan adına çevrilmeli.
+5. `CRAWL4AI_BASE_URL` yalnız Vercel'den erişilebilir bir adresse anlamlı; laptoptaki
+   docker değil.
