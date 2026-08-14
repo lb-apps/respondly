@@ -1181,3 +1181,26 @@ bağımlılık. epub çıkarımı `os.tmpdir()` kullanıyor (Vercel'de yazılabi
 4. Meta webhook callback URL'i yeni alan adına çevrilmeli.
 5. `CRAWL4AI_BASE_URL` yalnız Vercel'den erişilebilir bir adresse anlamlı; laptoptaki
    docker değil.
+
+# Cloudflare: `respondly.littlebigapps.io` SSL modu (2026-08-14)
+
+Önceki oturumda `cloudflare-lba` MCP'si oturum ortasında eklendiği için yüklenmemişti ve
+düzeltme askıda kalmıştı. Bu oturumda yapıldı.
+
+**Sorun:** zone `littlebigapps.io` (`9ad2831e14f2c54a71ea57a8ee518948`, Info.littlebigapps
+hesabı) 2022'den beri SSL/TLS **Flexible** modundaydı. `respondly` kaydı proxy'li ve
+Vercel'e (`28f51b9c15d35636.vercel-dns-017.com`) bakıyor: Cloudflare origin'e HTTP gidiyor,
+Vercel 308 ile HTTPS'e yolluyor, Cloudflare aynı HTTP isteğini tekrarlıyor →
+`ERR_TOO_MANY_REDIRECTS`. CLAUDE.md'de yazılı tuzağın ta kendisi.
+
+- [x] SSL/TLS encryption mode `flexible` → **`strict` (Full strict)** — `cloudflare-lba`
+      MCP, `PATCH /zones/{id}/settings/ssl`. Zone geneli; etkilenen proxy'li kayıtlar
+      yalnız `respondly` ve `_domainconnect`. Kök A kaydı, `www` (Gumroad) ve SendGrid
+      kayıtları proxy'siz, dokunulmadı.
+
+**Doğrulama (canlı):** `https://respondly.littlebigapps.io/` → 307 `/login?redirectTo=%2F`
+→ 200, `server: cloudflare` + `x-vercel-id` başlıklarıyla, döngü yok. `http://` → 301 https
+(`always_use_https` açık). `/login` 200.
+
+**Kalan (bu işin dışında):** zone'un `min_tls_version` değeri hâlâ **1.0**. 1.2'ye çekmek
+doğru olur ama zone geneli ve dışa dönük — ayrı karar.

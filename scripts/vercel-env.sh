@@ -14,6 +14,12 @@
 
 set -euo pipefail
 
+# This repo deploys from the Little Big Apps account, not the personal one a
+# bare `vercel` happens to be logged into, so the CLI config directory is
+# pinned. Override with VERCEL_CONFIG_DIR when acting as another account.
+VERCEL_CONFIG_DIR="${VERCEL_CONFIG_DIR:-$HOME/.vercel-lbapps}"
+vercel_cli() { vercel --global-config "$VERCEL_CONFIG_DIR" "$@"; }
+
 FILE="${1:-.env.local}"
 TARGET="${2:-production}"
 
@@ -63,8 +69,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     continue
   fi
 
-  vercel env rm "$name" "$TARGET" --yes >/dev/null 2>&1 || true
-  printf '%s' "$value" | vercel env add "$name" "$TARGET" >/dev/null
+  vercel_cli env rm "$name" "$TARGET" --yes >/dev/null 2>&1 || true
+  printf '%s' "$value" | vercel_cli env add "$name" "$TARGET" >/dev/null
   echo "set    $name → $TARGET"
   pushed+=("$name")
 done < "$FILE"
@@ -84,4 +90,5 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 echo "All required variables are set for $TARGET."
-echo "Redeploy for them to take effect: vercel --prod"
+echo "Redeploy for them to take effect:"
+echo "  vercel --global-config \"$VERCEL_CONFIG_DIR\" --prod"
