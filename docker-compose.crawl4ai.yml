@@ -1,0 +1,25 @@
+# Self-hosted Crawl4AI service — renders JS-heavy pages (Wix/SPA) and returns
+# clean markdown + discovered links for the knowledge base whole-site crawler.
+#
+# Start:  docker compose -f docker-compose.crawl4ai.yml up -d
+# Stop:   docker compose -f docker-compose.crawl4ai.yml down
+# Health: curl http://localhost:11235/health  (older images: /monitor/health)
+#
+# Then set CRAWL4AI_BASE_URL=http://localhost:11235 in .env.local (already done).
+# Leaving CRAWL4AI_BASE_URL unset disables crawling (single-page fallback).
+services:
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    container_name: respondly-crawl4ai
+    ports:
+      - "11235:11235"
+    shm_size: "1g" # Chromium needs shared memory to render reliably
+    restart: unless-stopped
+    healthcheck:
+      # Path moved to /monitor/health in newer images — accept either.
+      test:
+        - "CMD-SHELL"
+        - "curl -fsS http://localhost:11235/health || curl -fsS http://localhost:11235/monitor/health"
+      interval: 30s
+      timeout: 10s
+      retries: 3
