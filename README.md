@@ -52,6 +52,17 @@ token Supabase Vault'ta saklanır.
 2. **Ortam değişkenlerini gir.** `.env.example`'daki her zorunlu adı Production (ve
    istersen Preview) ortamına ekle. `APP_URL` üretim alan adın olmalı — `vercel.app`
    adresi veya bağladığın kendi alan adın.
+
+   Panelden tek tek girmek yerine, doldurulmuş `.env.local`'i toptan yükleyebilirsin:
+
+   ```bash
+   vercel link                                   # proje bir kez bağlanır
+   ./scripts/vercel-env.sh .env.local production
+   ```
+
+   Script değerleri dosyadan okuyup `vercel env add`'e stdin ile verir — değerler
+   kabuk geçmişine ve repoya girmez. Aynı adı ikinci kez çalıştırmak günceller.
+   Zorunlu bir değişken eksikse hangisi olduğunu söyleyip hata verir.
 3. **Dağıt.** Uzun iş yapan uçlar (`/api/whatsapp/webhook`, `/api/assistant/chat`,
    `/api/cron/*`) kendi `maxDuration = 60` değerlerini kodda taşıyor; Vercel bunu
    dosyadan okur, ayrıca ayar gerekmez.
