@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, Json } from "@/types/database"
 import { signAttachmentUrl } from "@/lib/assistant/attachments/sign"
 import type { ChatAttachmentRecord } from "@/lib/assistant/attachments/types"
+import type { ContactProfile } from "@/lib/contacts/profile-store"
+import { getPreviewPersona } from "@/lib/supabase/queries/preview-personas"
 
 type DB = SupabaseClient<Database>
 
@@ -11,15 +13,43 @@ export type PreviewUIMessage = {
   parts: unknown[]
 }
 
+/**
+ * Open a session, taking the persona's snapshot as it stands right now.
+ *
+ * The copy is the point: the assistant reads and writes the snapshot for the
+ * rest of the run, so it can learn a name mid-conversation without the card the
+ * staff defined ever changing. Starting a new conversation starts clean.
+ */
 export async function createPreviewSession(
   supabase: DB,
   args: {
     organizationId: string
     assistantId: string
     createdBy: string
+    personaId?: string | null
     title?: string | null
   }
 ): Promise<string | null> {
+  const persona = args.personaId
+    ? await getPreviewPersona(supabase, {
+        personaId: args.personaId,
+        organizationId: args.organizationId,
+      })
+    : null
+
+  const snapshot: ContactProfile | null = persona
+    ? {
+        firstName: persona.firstName,
+        lastName: persona.lastName,
+        phone: persona.phone,
+        email: persona.email,
+        nationality: persona.nationality,
+        country: persona.country,
+        preferredLanguage: persona.preferredLanguage,
+        notes: persona.notes,
+      }
+    : null
+
   const { data, error } = await supabase
     .from("assistant_preview_sessions")
     .insert({
@@ -27,6 +57,8 @@ export async function createPreviewSession(
       assistant_id: args.assistantId,
       created_by: args.createdBy,
       title: args.title ?? null,
+      persona_id: persona?.id ?? null,
+      persona_snapshot: snapshot as unknown as Json,
     })
     .select("id")
     .single()
@@ -89,6 +121,10 @@ export async function buildPreviewModelMessages(
     .from("assistant_preview_messages")
     .select("id, role, body, parts, created_at")
     .eq("session_id", sessionId)
+    // `system` rows are things that happened to the conversation — a contact
+    // card being updated — not things anyone said. They belong to the staff
+    // reading the thread; handed to the model it would answer them.
+    .in("role", ["user", "assistant"])
     .order("created_at", { ascending: true })
     .limit(50)
 

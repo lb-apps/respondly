@@ -68,6 +68,10 @@ export async function saveMcpServer(
     auth_header_name: v.authKind === "header" ? (v.authHeaderName ?? "") : null,
     headers: rowsToRecord(v.headers) as Json,
     query_params: rowsToRecord(v.queryParams) as Json,
+    // Names only — the values stay in `query_params`, their one home.
+    link_params: v.queryParams
+      .filter((row) => row.appendToLinks && row.key.trim())
+      .map((row) => row.key.trim()),
     timeout_ms: v.timeoutMs,
     enabled: v.enabled,
   }

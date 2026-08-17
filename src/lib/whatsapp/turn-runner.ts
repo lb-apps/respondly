@@ -4,8 +4,8 @@ import { generateAssistantReply } from "@/lib/whatsapp/assistant-reply"
 import { sendAssistantReply } from "@/lib/whatsapp/send-reply"
 import { insertMessage, setConversationStatus } from "@/lib/whatsapp/conversation"
 import { handoffMessage } from "@/lib/whatsapp/handoff-message"
-import { recordHandoffEvent } from "@/lib/inbox/record-handoff-event"
-import type { HandoffReason } from "@/lib/inbox/handoff-events"
+import { recordHandoffEvent } from "@/lib/inbox/record-thread-event"
+import type { HandoffReason } from "@/lib/inbox/thread-events"
 import {
   sendTypingIndicator,
   sendWhatsAppMessage,

@@ -11,6 +11,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { ContactAvatar } from "@/components/inbox/contact-avatar"
 import { cn } from "@/lib/utils"
 import type { PreviewSessionListItem } from "@/lib/supabase/queries/preview"
 
@@ -74,6 +75,18 @@ export function PreviewHistory({
                         >
                           {sessionLabel(session.title, "Konuşma")}
                         </span>
+                        {/* Which person this run was against. Sessions recorded
+                            before personas existed simply show nothing. */}
+                        {session.persona && (
+                          <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                            {session.persona.phone && (
+                              <ContactAvatar size="sm" seed={session.persona.phone} />
+                            )}
+                            <span className="truncate">
+                              {session.persona.label ?? "Silinmiş kişi"}
+                            </span>
+                          </span>
+                        )}
                       </button>
                     </li>
                   )

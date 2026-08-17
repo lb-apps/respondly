@@ -23,6 +23,14 @@ import { Spinner } from "@/components/ui/spinner"
  */
 
 /**
+ * The surface a thread is read on — its background, the space it takes in the
+ * pane, and its gutter. Named so a placeholder can stand on the same ground
+ * without inheriting the scroll machinery below, and so the two cannot drift
+ * apart the next time the gutter changes.
+ */
+export const THREAD_SURFACE = "bg-sidebar min-h-0 flex-1 px-6"
+
+/**
  * The scroller.
  *
  * `overflow-anchor: none` hands scroll compensation to the caller: when older
@@ -41,7 +49,7 @@ export function ThreadScroller({
   return (
     <ScrollArea
       className={cn(
-        "bg-sidebar min-h-0 flex-1 px-6",
+        THREAD_SURFACE,
         "[&_[data-slot=scroll-area-viewport]]:[overflow-anchor:none]",
         "[&_[data-slot=scroll-area-viewport]>div]:!block",
         className
@@ -62,12 +70,10 @@ export function ThreadScroller({
 export function ThreadColumn({
   className,
   children,
-}: {
-  className?: string
-  children: React.ReactNode
-}) {
+  ...props
+}: React.ComponentProps<"div">) {
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col py-6", className)}>
+    <div className={cn("mx-auto flex max-w-3xl flex-col py-6", className)} {...props}>
       {children}
     </div>
   )

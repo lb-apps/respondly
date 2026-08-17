@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Server,
   Settings2,
+  Users,
   type LucideIcon,
 } from "lucide-react"
 
@@ -94,6 +95,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
   const primary: NavItem[] = [
     { href: `${base}/inbox`, label: "Gelen Kutusu", icon: Inbox, module: "inbox" },
+    { href: `${base}/contacts`, label: "Kişiler", icon: Users, module: "inbox" },
     { href: `${base}/channels`, label: "WhatsApp", icon: MessageCircle, module: "channels" },
   ]
 

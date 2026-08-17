@@ -16,6 +16,8 @@ import { getConversationHistory } from "@/lib/whatsapp/conversation"
 import { formatAssistantText, formatAssistantMessageText, extractImageUrls } from "@/lib/assistant/format-text"
 import { detectGuestLocaleFromMessages } from "@/lib/assistant/conversation-language"
 import { resolveContactLocale } from "@/lib/assistant/contact-locale"
+import { diffContactProfile } from "@/lib/inbox/thread-events"
+import { recordContactProfileEvent } from "@/lib/inbox/record-thread-event"
 import { buildGuestLanguagePromptBlock } from "@/lib/assistant/guest-language-prompt"
 import { buildContactContextBlock } from "@/lib/assistant/contact-context"
 import { runAssistantTurn } from "@/lib/assistant/run-turn"
@@ -23,7 +25,7 @@ import {
   decideHandoff,
   survivedSystemFailure,
 } from "@/lib/assistant/handoff-decision"
-import { getMcpToolCatalogue } from "@/lib/supabase/queries/mcp-servers"
+import { getLinkParams, getMcpToolCatalogue } from "@/lib/supabase/queries/mcp-servers"
 import { extractMcpImages } from "@/lib/mcp/images"
 import { isMcpToolError } from "@/lib/mcp/toolsets"
 import {
@@ -279,7 +281,7 @@ export async function generateAssistantReply(
     ? await supabase
         .from("contacts")
         .select(
-          "first_name, last_name, phone, email, nationality, country, preferred_language"
+          "first_name, last_name, phone, email, nationality, country, preferred_language, notes"
         )
         .eq("id", conversationRow.contact_id)
         .maybeSingle()
@@ -295,6 +297,7 @@ export async function generateAssistantReply(
           nationality: contactRow.nationality,
           country: contactRow.country,
           preferredLanguage: contactRow.preferred_language,
+          notes: contactRow.notes,
         }
       : { phone: conversationRow?.guest_phone ?? null }
   )
@@ -311,6 +314,8 @@ export async function generateAssistantReply(
   )
 
   if (languageLearned && conversationRow?.contact_id) {
+    const previousLanguage = contactRow?.preferred_language?.trim() || null
+
     // Awaited on purpose. A Supabase query builder is a lazy thenable, not a
     // promise: `void builder` never calls `.then()`, so the request is never
     // sent at all. That is how the line below this one — the only writer of
@@ -318,16 +323,40 @@ export async function generateAssistantReply(
     // database sat at its default.
     const { error } = await supabase
       .from("contacts")
-      .update({ preferred_language: guestLocale })
+      .update({
+        preferred_language: guestLocale,
+        // Version signal, the same one every other writer of this row sets. It
+        // was missing here, so an open inbox panel never noticed a language the
+        // assistant had learned.
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", conversationRow.contact_id)
     if (error) {
       console.warn(`[assistant] could not save contact language: ${error.message}`)
+    } else if (previousLanguage) {
+      // Only a switch earns a line. `resolveContactLocale` also persists the
+      // very first reading — including the one guessed from the phone number —
+      // and announcing that would open every conversation ever started with
+      // "Tercih edilen dil: — → Türkçe", which is a default settling rather
+      // than anything a person decided.
+      const changes = diffContactProfile(
+        { preferred_language: previousLanguage },
+        { preferred_language: guestLocale }
+      )
+      await recordContactProfileEvent(supabase, {
+        orgId: args.orgId,
+        target: { kind: "conversation", conversationId: args.conversationId },
+        changes,
+      })
     }
   }
 
   // Cached catalogue, not a live handshake: keeps the prompt byte-stable
   // between turns so the provider prompt cache keeps hitting.
-  const connectedServers = await getMcpToolCatalogue(supabase, args.orgId)
+  const [connectedServers, linkParams] = await Promise.all([
+    getMcpToolCatalogue(supabase, args.orgId),
+    getLinkParams(supabase, args.orgId),
+  ])
 
   // Split at the cache boundary: the stable half is identical for every
   // conversation in this org today, the per-turn half is not.
@@ -342,6 +371,7 @@ export async function generateAssistantReply(
       firstMessage: settings?.firstMessage ?? null,
       timezone: settings?.timezone ?? org?.timezone,
       connectedServers,
+      linkParams,
     }),
     perTurn: [contactBlock, buildGuestLanguagePromptBlock(guestLocale)].filter(
       (section): section is string => Boolean(section)
@@ -354,7 +384,12 @@ export async function generateAssistantReply(
   requestContext.set("orgId", args.orgId)
   requestContext.set("assistantId", assistant?.id ?? null)
   requestContext.set("conversationId", args.conversationId)
-  requestContext.set("contactId", conversationRow?.contact_id ?? null)
+  requestContext.set(
+    "contactRef",
+    conversationRow?.contact_id
+      ? { kind: "contact", contactId: conversationRow.contact_id }
+      : null
+  )
   requestContext.set("guestLocale", guestLocale)
 
   // Same reason as the contact write above: unawaited, this never ran, and the

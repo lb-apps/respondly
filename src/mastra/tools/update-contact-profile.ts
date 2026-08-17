@@ -1,7 +1,12 @@
 import { createTool } from "@mastra/core/tools"
 import { z } from "zod"
-import { createAdminClient } from "@/lib/supabase/admin"
 import { GUEST_LOCALES } from "@/lib/i18n/guest-locale"
+import {
+  resolveContactProfileStore,
+  type ContactRef,
+} from "@/lib/contacts/profile-store"
+import { createAdminClient } from "@/lib/supabase/admin"
+import { recordContactProfileEvent } from "@/lib/inbox/record-thread-event"
 
 /**
  * Record who the person is — the handful of identity fields the contact card
@@ -11,11 +16,12 @@ import { GUEST_LOCALES } from "@/lib/i18n/guest-locale"
  * here: it belongs to the connected system that owns it, and the assistant
  * fetches it fresh rather than caching a copy that goes stale.
  *
- * Writes the same row staff edit in the inbox. Contact + org id come from the
- * request context (server-set); a service-role client scoped to that org
- * performs the write. The staff-private `notes` field is intentionally NOT
- * writable by the assistant. In the sandbox there is no contact, so this is a
- * no-op.
+ * On WhatsApp this writes the same row staff edit in the inbox. In the preview
+ * it writes the session's own copy of the persona, so a test run never dirties
+ * the card the staff defined. Either way the target comes from the request
+ * context (server-set) and the store scopes the write to the org. The
+ * staff-written `notes` field is intentionally NOT writable here — the
+ * assistant reads it, the team owns it.
  */
 export const updateContactProfileTool = createTool({
   id: "update_contact_profile",
@@ -54,45 +60,39 @@ export const updateContactProfileTool = createTool({
   }),
   outputSchema: z.object({ updated: z.boolean() }),
   execute: async (input, context) => {
-    const contactId = context?.requestContext?.get("contactId") as
-      | string
+    const contactRef = context?.requestContext?.get("contactRef") as
+      | ContactRef
+      | null
       | undefined
     const orgId = context?.requestContext?.get("orgId") as string | undefined
-    if (!contactId || !orgId) return { updated: false }
+    const conversationId = context?.requestContext?.get("conversationId") as
+      | string
+      | null
+      | undefined
 
-    const patch: {
-      first_name?: string
-      last_name?: string
-      email?: string
-      nationality?: string
-      country?: string
-      preferred_language?: string
-      updated_at?: string
-    } = {}
-    if (input.firstName !== undefined) patch.first_name = input.firstName
-    if (input.lastName !== undefined) patch.last_name = input.lastName
-    if (input.email !== undefined) patch.email = input.email
-    if (input.nationality !== undefined) {
-      patch.nationality = input.nationality.toUpperCase()
+    const store = resolveContactProfileStore({ contactRef, orgId })
+    if (!store) return { updated: false }
+
+    const changes = await store.write(input)
+    if (changes === null) return { updated: false }
+
+    // What was learned gets a line in the thread, on either surface — watching
+    // the assistant pick up a name mid-conversation is the whole point of the
+    // preview, and it used to be the one place that never showed it.
+    if (changes.length > 0 && orgId && contactRef && conversationId) {
+      await recordContactProfileEvent(createAdminClient(), {
+        orgId,
+        target:
+          contactRef.kind === "contact"
+            ? { kind: "conversation", conversationId }
+            : { kind: "preview_session", sessionId: contactRef.sessionId },
+        changes,
+      })
     }
-    if (input.country !== undefined) patch.country = input.country.toUpperCase()
-    if (input.preferredLanguage !== undefined) {
-      patch.preferred_language = input.preferredLanguage
-    }
 
-    if (Object.keys(patch).length === 0) return { updated: false }
-
-    // Version signal — lets an already-open inbox panel detect this write and
-    // re-sync, even though the contact id itself didn't change.
-    patch.updated_at = new Date().toISOString()
-
-    const supabase = createAdminClient()
-    const { error } = await supabase
-      .from("contacts")
-      .update(patch)
-      .eq("id", contactId)
-      .eq("organization_id", orgId)
-
-    return { updated: !error }
+    // Reported as saved even when nothing moved: the value the customer gave is
+    // what the card holds, which is what the model asked for. Saying "no" to a
+    // value that was already correct only invites it to try again.
+    return { updated: true }
   },
 })

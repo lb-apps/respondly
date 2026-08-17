@@ -10,9 +10,22 @@ function makeViewport() {
   const listeners = new Map<string, Set<() => void>>()
   const content = {}
 
+  // Clamped the way a real scroller is: assigning past the end lands on the
+  // end. `toBottom` is built on exactly that, so a fake that let `scrollTop`
+  // run past `scrollHeight` would prove nothing.
+  let scrollTop = 400
+
   const viewport = {
     scrollHeight: 1000,
-    scrollTop: 400,
+    /** 1000 tall, 600 visible → the bottom is scrollTop 400. */
+    clientHeight: 600,
+    get scrollTop() {
+      return scrollTop
+    },
+    set scrollTop(value: number) {
+      const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      scrollTop = Math.min(Math.max(0, value), max)
+    },
     firstElementChild: content,
     addEventListener(type: string, fn: () => void) {
       const set = listeners.get(type) ?? new Set()
@@ -25,6 +38,14 @@ function makeViewport() {
     /** Content added above, the way a prepended page arrives. */
     grow(px: number) {
       viewport.scrollHeight += px
+      fireResize()
+    },
+    /** The pane around the scroller settling — the composer, its hint line. */
+    resizeViewport(px: number) {
+      viewport.clientHeight += px
+      // Re-assert the clamp: a shorter scroll range pulls `scrollTop` back the
+      // way the browser would.
+      viewport.scrollTop = scrollTop
       fireResize()
     },
     /** The reader turning the wheel. */
@@ -145,6 +166,81 @@ describe("pinScrollFromBottom", () => {
       if (pin.active) vp.grow(10)
     }
     assert.equal(pin.active, false, "the cap ends it")
+  })
+
+  it("holds indefinitely when both timers are off — the landing pin", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const vp = makeViewport()
+    const pin = pinScrollFromBottom(vp as unknown as HTMLElement, {
+      idleMs: null,
+      maxMs: null,
+    })
+
+    // A thread settles in bursts far enough apart to outlive any useful idle
+    // timer: a carousel measures, then a photo decodes a second later.
+    vp.grow(200)
+    t.mock.timers.tick(60_000)
+    assert.ok(pin.active, "still holding long after a capped pin would have gone")
+
+    vp.grow(150)
+    t.mock.timers.tick(60_000)
+    assert.ok(pin.active)
+    assert.equal(vp.scrollTop, vp.scrollHeight - 600, "still the same distance up")
+
+    pin.release()
+  })
+
+  const remaining = (vp: { scrollHeight: number; scrollTop: number; clientHeight: number }) =>
+    vp.scrollHeight - vp.scrollTop - vp.clientHeight
+
+  it("holds the bottom itself, not a distance, when asked to", () => {
+    const vp = makeViewport()
+    vp.scrollTop = vp.scrollHeight // landing: ask for the bottom
+    const pin = pinScrollFromBottom(vp as unknown as HTMLElement, {
+      toBottom: true,
+      idleMs: null,
+      maxMs: null,
+    })
+
+    vp.grow(300)
+    assert.equal(remaining(vp), 0, "still at the bottom after content arrives")
+
+    // The pane around the scroller settles too: the composer resolves, its hint
+    // wraps, and the viewport loses height. The distance that was right a moment
+    // ago is now wrong, and only re-asking for the bottom stays correct.
+    vp.resizeViewport(-40)
+    assert.equal(remaining(vp), 0, "still at the bottom after the viewport changes")
+    pin.release()
+  })
+
+  it("does not read the browser's own clamping as the reader, in bottom mode", () => {
+    const vp = makeViewport()
+    vp.scrollTop = vp.scrollHeight
+    const pin = pinScrollFromBottom(vp as unknown as HTMLElement, {
+      toBottom: true,
+      idleMs: null,
+      maxMs: null,
+    })
+
+    // A viewport that grows shrinks the scroll range, so the browser pulls
+    // `scrollTop` back on its own and fires a scroll for it. That is not
+    // somebody reading — it leaves us exactly where we were, at the bottom.
+    vp.resizeViewport(120)
+    vp.emit("scroll")
+    assert.ok(pin.active, "still holding")
+    assert.equal(remaining(vp), 0)
+    pin.release()
+  })
+
+  it("still lets the reader take over when the timers are off", () => {
+    const vp = makeViewport()
+    const pin = pinScrollFromBottom(vp as unknown as HTMLElement, {
+      idleMs: null,
+      maxMs: null,
+    })
+
+    vp.scrollBy(-120)
+    assert.equal(pin.active, false, "the reader always wins")
   })
 
   it("cleans up after itself, and release is safe to call twice", () => {

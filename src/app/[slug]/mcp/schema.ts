@@ -12,6 +12,15 @@ const keyValueRow = z.object({
   value: z.string().trim(),
 })
 
+/**
+ * A query param, plus whether it also rides on links the assistant sends to the
+ * org's own site. The flag lives on the row rather than in a second list so the
+ * name can never be marked without a value to go with it.
+ */
+const queryParamRow = keyValueRow.extend({
+  appendToLinks: z.boolean(),
+})
+
 const mcpServerBaseSchema = z.object({
   name: z.string().trim().min(1, "Ad gerekli").max(80, "En fazla 80 karakter"),
   slug: z
@@ -28,7 +37,7 @@ const mcpServerBaseSchema = z.object({
   /** Blank on an existing server means "keep the stored secret". */
   secret: z.string().max(4096).optional().or(z.literal("")),
   headers: z.array(keyValueRow).max(20),
-  queryParams: z.array(keyValueRow).max(20),
+  queryParams: z.array(queryParamRow).max(20),
   timeoutMs: z
     .number("Sayı girin")
     .int()
@@ -123,5 +132,22 @@ export function recordToRows(
   return Object.entries(value as Record<string, unknown>).map(([key, raw]) => ({
     key,
     value: typeof raw === "string" ? raw : String(raw ?? ""),
+  }))
+}
+
+/**
+ * Query-param rows for editing, each carrying whether it also rides on the
+ * org's own links. A name in `link_params` with no value left in `query_params`
+ * simply has nothing to mark, so it drops out here the same way it does when
+ * the prompt is built.
+ */
+export function queryParamRows(
+  queryParams: unknown,
+  linkParams: string[] | null | undefined
+): Array<{ key: string; value: string; appendToLinks: boolean }> {
+  const marked = new Set((linkParams ?? []).map((name) => name.trim()))
+  return recordToRows(queryParams).map((row) => ({
+    ...row,
+    appendToLinks: marked.has(row.key),
   }))
 }

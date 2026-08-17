@@ -327,10 +327,17 @@ export function McpServerForm({
           rows={queryParams.fields}
           namePrefix="queryParams"
           form={form}
-          onAdd={() => queryParams.append({ key: "", value: "" })}
+          onAdd={() =>
+            queryParams.append({ key: "", value: "", appendToLinks: false })
+          }
           onRemove={queryParams.remove}
           keyPlaceholder="locale"
           valuePlaceholder="{{guestLocale}}"
+          linkToggle={{
+            label: "Sitemize giden linklere de ekle",
+            description:
+              "İşaretli parametreler, asistanın sitenize yönlendirmek için gönderdiği linklerin sonuna eklenir. Bir aracın ürettiği ödeme/rezervasyon linkleri olduğu gibi gider.",
+          }}
         />
 
         <KeyValueSection
@@ -393,6 +400,7 @@ function KeyValueSection({
   onRemove,
   keyPlaceholder,
   valuePlaceholder,
+  linkToggle,
 }: {
   title: string
   description: string
@@ -403,18 +411,24 @@ function KeyValueSection({
   onRemove: (index: number) => void
   keyPlaceholder: string
   valuePlaceholder: string
+  /** Only query params travel on links; headers never do. */
+  linkToggle?: { label: string; description: string }
 }) {
   return (
     <section className="space-y-3">
       <div className="space-y-1">
         <h2 className="text-sm font-medium">{title}</h2>
         <p className="text-sm text-muted-foreground">{description}</p>
+        {linkToggle ? (
+          <p className="text-sm text-muted-foreground">{linkToggle.description}</p>
+        ) : null}
       </div>
 
       {rows.length > 0 ? (
         <ul className="space-y-2">
           {rows.map((row, index) => (
-            <li key={row.id} className="flex items-start gap-2">
+            <li key={row.id} className="space-y-2">
+              <div className="flex items-start gap-2">
               <FormField
                 control={form.control}
                 name={`${namePrefix}.${index}.key`}
@@ -450,6 +464,27 @@ function KeyValueSection({
               >
                 <Trash2 className="size-4" />
               </Button>
+              </div>
+
+              {linkToggle && namePrefix === "queryParams" ? (
+                <FormField
+                  control={form.control}
+                  name={`queryParams.${index}.appendToLinks`}
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2 pl-1">
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormLabel className="text-muted-foreground text-xs font-normal">
+                        {linkToggle.label}
+                      </FormLabel>
+                    </FormItem>
+                  )}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

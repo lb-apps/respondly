@@ -26,10 +26,12 @@ const attachmentSchema = z.object({
   sizeBytes: z.number().int().positive().max(CHAT_ATTACHMENT_MAX_BYTES),
 })
 
-export async function createPreviewSessionAction(
-  assistantId: string,
+export async function createPreviewSessionAction(args: {
+  assistantId: string
   organizationId: string
-): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
+  /** The card this run plays. The session takes its own copy at this moment. */
+  personaId: string | null
+}): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> {
   const supabase = await createClient()
   const {
     data: { user },
@@ -37,9 +39,10 @@ export async function createPreviewSessionAction(
   if (!user) return { ok: false, error: "Yetkisiz" }
 
   const sessionId = await createPreviewSession(supabase, {
-    organizationId,
-    assistantId,
+    organizationId: args.organizationId,
+    assistantId: args.assistantId,
     createdBy: user.id,
+    personaId: args.personaId,
   })
   if (!sessionId) return { ok: false, error: "Oturum oluşturulamadı" }
   return { ok: true, sessionId }

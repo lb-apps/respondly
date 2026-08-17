@@ -199,6 +199,54 @@ describe("buildSystemPrompt", () => {
     assert.match(engine, /A bare URL in the text is always wrong/)
   })
 
+  it("says nothing when the org has marked no params", () => {
+    const engine = buildEngineRules({ orgName: "Acme", now: NOW })
+    assert.ok(!engine.includes("Parameters on Acme Links"))
+    assert.ok(!engine.includes("promo="))
+  })
+
+  it("tags the org's own links with the marked parameters", () => {
+    const engine = buildEngineRules({
+      orgName: "Acme",
+      now: NOW,
+      linkParams: [{ name: "promo", value: "yaz2026" }],
+    })
+    assert.match(engine, /## Parameters on Acme Links/)
+    assert.match(engine, /`promo=yaz2026`/)
+    // Both join characters, because getting this wrong corrupts the URL.
+    assert.match(engine, /\?promo=yaz2026/)
+    assert.match(engine, /&promo=yaz2026/)
+  })
+
+  it("carves out the links a tool minted for a transaction", () => {
+    const engine = buildEngineRules({
+      orgName: "Acme",
+      now: NOW,
+      linkParams: [{ name: "promo", value: "yaz2026" }],
+    })
+    // A checkout link may be signed; appending to it can invalidate the very
+    // link the customer is about to pay through.
+    assert.match(engine, /takes payment or finalises the booking/)
+    assert.match(engine, /character for character/)
+    // The carve-out used to say "any link a tool generated", which swallowed
+    // the rule whole: nearly every link the assistant sends comes from a tool,
+    // and a room page arrives carrying dates and guest counts like any other.
+    assert.match(engine, /Nothing else is an exception/)
+    assert.match(engine, /even though a tool produced it/)
+    assert.match(engine, /taking money is/)
+    // And it must not be announced — the customer sees a button, not a URL.
+    assert.match(engine, /Never mention these parameters/)
+  })
+
+  it("keeps them out of links that are not the org's own site", () => {
+    const engine = buildEngineRules({
+      orgName: "Acme",
+      now: NOW,
+      linkParams: [{ name: "promo", value: "yaz2026" }],
+    })
+    assert.match(engine, /no map links, no third-party pages/)
+  })
+
   it("is stable across calls for the same inputs (prompt caching)", () => {
     const config = { orgName: "Acme", now: NOW }
     assert.deepEqual(buildSystemPrompt(config), buildSystemPrompt(config))

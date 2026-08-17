@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
+  conversationRowNeedsRefetch,
   messagePreviewFromInsert,
+  messageRowBumpsList,
   patchConversationFromRealtimeRow,
   sortInboxConversations,
 } from "@/lib/inbox/list-utils"
@@ -104,6 +106,8 @@ export function useInboxConversationList({
           return prev
         }
 
+        if (conversationRowNeedsRefetch(prev[idx]!, row)) needsRefresh = true
+
         const next = prev.slice()
         next[idx] = patchConversationFromRealtimeRow(prev[idx]!, row)
         return sortInboxConversations(next)
@@ -140,7 +144,11 @@ export function useInboxConversationList({
           },
           (payload) => {
             const row = payload.new as MessageRow
-            if (row?.conversation_id) applyMessageInsert(row)
+            if (row?.conversation_id && messageRowBumpsList(row)) {
+              applyMessageInsert(row)
+            }
+            // The refresh runs either way: an event still has to reach the
+            // thread that is open, it just must not disturb the list.
             onAnyChange()
           }
         )
@@ -155,12 +163,14 @@ export function useInboxConversationList({
           (payload) => {
             const row = payload.new as Record<string, unknown>
             if (row && payload.eventType !== "DELETE") {
+              // No unconditional refresh here: `applyConversationChange` patches
+              // the row in place and asks for a refetch only when the change is
+              // one the server render owns. See `conversationRowNeedsRefetch`.
               applyConversationChange(
                 row,
                 payload.eventType === "INSERT" ? "INSERT" : "UPDATE"
               )
             }
-            onAnyChange()
           }
         )
         .on(

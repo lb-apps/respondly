@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server"
 import type { Conversation, Message } from "@/types/database"
 import { parseMetadataAttachments } from "@/lib/assistant/attachments/parts"
 import { CHAT_ATTACHMENTS_BUCKET } from "@/lib/assistant/attachments/constants"
-import { parseHandoffEvent, type HandoffEvent } from "@/lib/inbox/handoff-events"
+import { parseThreadEvent, type ThreadEvent } from "@/lib/inbox/thread-events"
 
 /**
  * One page of a thread. WhatsApp-sized rather than "everything": a page is what
@@ -103,10 +103,10 @@ export interface ThreadMessage {
   /** Which tools the assistant turn called; see `@/lib/assistant/tool-trace`. */
   toolTrace: unknown[] | null
   /**
-   * Set on `system` rows only: the moment the conversation changed hands. See
-   * `@/lib/inbox/handoff-events`.
+   * Set on `system` rows only: something that happened to the conversation
+   * rather than something anyone said. See `@/lib/inbox/thread-events`.
    */
-  event: HandoffEvent | null
+  event: ThreadEvent | null
   attachments: ThreadAttachment[]
   /**
    * Who on the team sent this, for staff messages. Null for everything else —
@@ -211,7 +211,7 @@ async function toThreadMessage(
     createdAt: m.created_at,
     richContent: Array.isArray(m.rich_content) ? m.rich_content : null,
     toolTrace: Array.isArray(m.tool_trace) ? m.tool_trace : null,
-    event: parseHandoffEvent(m.metadata),
+    event: parseThreadEvent(m.metadata),
     attachments,
     sender: m.sender_user_id ? (senders.get(m.sender_user_id) ?? null) : null,
   }

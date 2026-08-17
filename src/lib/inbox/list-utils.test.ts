@@ -1,67 +1,14 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
+  conversationRowNeedsRefetch,
   isAssistantTyping,
+  messageRowBumpsList,
   mergeThreadMessages,
   TURN_LOCK_TTL_MS,
   patchConversationFromRealtimeRow,
-  dayKey,
-  formatDayHeading,
-  groupByDay,
   sortInboxConversations,
 } from "@/lib/inbox/list-utils"
-
-function isoDaysAgo(days: number, hour = 12): string {
-  const d = new Date()
-  d.setDate(d.getDate() - days)
-  d.setHours(hour, 0, 0, 0)
-  return d.toISOString()
-}
-
-describe("dayKey", () => {
-  it("is stable within a calendar day and differs across days", () => {
-    const morning = new Date(2026, 0, 20, 8, 30).toISOString()
-    const evening = new Date(2026, 0, 20, 22, 15).toISOString()
-    const nextDay = new Date(2026, 0, 21, 1, 0).toISOString()
-    assert.equal(dayKey(morning), dayKey(evening))
-    assert.notEqual(dayKey(morning), dayKey(nextDay))
-  })
-})
-
-describe("formatDayHeading", () => {
-  it("labels today and yesterday with a date", () => {
-    assert.match(formatDayHeading(isoDaysAgo(0)), /^Bugün, /)
-    assert.match(formatDayHeading(isoDaysAgo(1)), /^Dün, /)
-  })
-
-  it("returns a non-empty label for older dates", () => {
-    assert.ok(formatDayHeading(isoDaysAgo(400)).length > 0)
-  })
-})
-
-describe("groupByDay", () => {
-  it("buckets consecutive same-day items together", () => {
-    const items = [
-      { id: "a", at: new Date(2026, 0, 20, 9).toISOString() },
-      { id: "b", at: new Date(2026, 0, 20, 18).toISOString() },
-      { id: "c", at: new Date(2026, 0, 21, 8).toISOString() },
-    ]
-    const groups = groupByDay(items, (i) => i.at)
-    assert.equal(groups.length, 2)
-    assert.deepEqual(
-      groups[0]!.items.map((i) => i.id),
-      ["a", "b"]
-    )
-    assert.deepEqual(
-      groups[1]!.items.map((i) => i.id),
-      ["c"]
-    )
-  })
-
-  it("returns an empty array for no items", () => {
-    assert.deepEqual(groupByDay([], (i: { at: string }) => i.at), [])
-  })
-})
 
 describe("sortInboxConversations", () => {
   it("orders by last activity, pinned threads first", () => {
@@ -127,6 +74,66 @@ describe("patchConversationFromRealtimeRow", () => {
   })
 })
 
+describe("conversationRowNeedsRefetch", () => {
+  const held = { status: "bot" }
+
+  it("does not refetch for the row its own read-marker wrote", () => {
+    // Opening a thread writes unread_count/last_read_at, which echoes back as
+    // an UPDATE. Refetching here made every click cost a second full page load.
+    assert.equal(
+      conversationRowNeedsRefetch(held, {
+        status: "bot",
+        unread_count: 0,
+        last_read_at: "2026-08-13T10:05:00Z",
+      }),
+      false
+    )
+  })
+
+  it("does not refetch while an assistant turn takes and releases its lock", () => {
+    assert.equal(
+      conversationRowNeedsRefetch(held, {
+        status: "bot",
+        turn_locked_at: "2026-08-13T10:05:00Z",
+      }),
+      false
+    )
+    assert.equal(
+      conversationRowNeedsRefetch(held, { status: "bot", turn_locked_at: null }),
+      false
+    )
+  })
+
+  it("does not refetch for a new message's preview and timestamp", () => {
+    assert.equal(
+      conversationRowNeedsRefetch(held, {
+        status: "bot",
+        last_message_at: "2026-08-13T10:05:00Z",
+        last_message_preview: "Teşekkürler",
+      }),
+      false
+    )
+  })
+
+  it("refetches when the thread changes hands", () => {
+    assert.equal(
+      conversationRowNeedsRefetch(held, { status: "needs_human" }),
+      true
+    )
+    assert.equal(
+      conversationRowNeedsRefetch({ status: "human" }, { status: "closed" }),
+      true
+    )
+  })
+
+  it("ignores a push-name change, which arrives on the contacts channel", () => {
+    assert.equal(
+      conversationRowNeedsRefetch(held, { status: "bot", guest_name: "emirhan" }),
+      false
+    )
+  })
+})
+
 describe("mergeThreadMessages", () => {
   const msg = (id: string, createdAt: string, body = id) => ({ id, createdAt, body })
 
@@ -186,5 +193,26 @@ describe("isAssistantTyping", () => {
 
   it("treats an unparseable timestamp as not typing", () => {
     assert.equal(isAssistantTyping("dün", started), false)
+  })
+})
+
+describe("messageRowBumpsList", () => {
+  it("keeps a timeline event out of the list", () => {
+    // The trigger already refuses to move `last_message_at` for a system row.
+    // Without this the list would still bump optimistically and then snap back
+    // when the refresh landed.
+    assert.equal(messageRowBumpsList({ role: "system" }), false)
+  })
+
+  it("lets every real message through", () => {
+    assert.equal(messageRowBumpsList({ role: "guest" }), true)
+    assert.equal(messageRowBumpsList({ role: "assistant" }), true)
+    assert.equal(messageRowBumpsList({ role: "staff" }), true)
+  })
+
+  it("fails open on a role it cannot read", () => {
+    // A row we cannot classify is a message. The other way round hides traffic.
+    assert.equal(messageRowBumpsList({}), true)
+    assert.equal(messageRowBumpsList({ role: null }), true)
   })
 })

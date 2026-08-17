@@ -116,8 +116,35 @@ so the DNS record, the proxy toggle and the SSL/TLS mode in front of
   `text-rose-700`), no arbitrary hex/oklch in components, no one-off overrides in `globals.css`
   unless applied via `npx shadcn@latest apply --preset … --only theme`. Theme tweaks → preset
   CLI, not hand-edited oklch.
-- **Every React change: run the `react-best-practices` skill first.**
+- **Every React change: run the `/react-best-practices` skill first**, and `/react-performance`
+  whenever the change touches rendering cost — lists, grids, realtime subscriptions, memo
+  boundaries, context, effects, or anything that re-renders on every keystroke.
+- **UI design goes through our own design system first.** Before writing UI, run
+  `/ui-ux-pro-max:ui-ux-pro-max`, then build against *this* repo's tokens and primitives:
+  `src/app/globals.css` variables, `src/components/ui/*`, and existing composed surfaces
+  (`ContactIdentityFields`, `AppSheet`, `ContactAvatar`, the page header strip…). The skill
+  advises; the repo decides. A skill suggestion that conflicts with our tokens, spacing scale,
+  or an existing component loses — never import a foreign palette, scale, or component
+  vocabulary alongside ours.
 - **Interaction/flow design: use the `/ui-designer` and `/ux-designer` skills.**
+- **Skeletons mirror the real thing, to the pixel — and stay mirrored.** A loading
+  placeholder is the same layout with the content not yet in it, never a rough sketch of
+  it. Two obligations:
+  1. **Build it from the real components.** Compose the skeleton out of the same
+     primitives the loaded state uses (`MessageRow`, `Bubble`, `ThreadColumn`, the real
+     header and composer…), with placeholders where the text goes. Never hand-roll grey
+     boxes at guessed sizes — that is what drifts. Where a shared wrapper cannot be
+     reused, extract its classes to a named constant both sides import (see
+     `THREAD_SURFACE` in `components/chat/thread-surface.tsx`); never retype them.
+     Size placeholders off the real type scale (`h-[1lh]` inside the element that carries
+     the font), not off invented pixel heights.
+  2. **Change the design → change its skeleton in the same commit.** Padding, gutters,
+     max-widths, header/composer heights, gaps, bottom alignment, scroll anchoring: if it
+     moved in the loaded state, it moves in the skeleton too. A skeleton that no longer
+     matches is a bug, not cosmetic debt — the pane visibly jumps when the content lands.
+  Verify by measuring, not by eye: read `getBoundingClientRect()` for both states and diff
+  them. They should be identical. Known gotcha: a flex parent cancels `stretch` on a child
+  carrying `mx-auto`, silently shrinking the column — add `w-full`.
 - **SOLID always.** Depend on abstractions (e.g. `McpServerConfig`, `McpTransport`). One
   responsibility per module. No god files/components/services.
 - **Assistant safety:** ground every factual answer (price/policy/availability) in an MCP tool

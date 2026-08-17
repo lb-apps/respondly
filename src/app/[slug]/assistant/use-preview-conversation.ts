@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState, type MutableRefObject } from "react"
 import type { UIMessage } from "ai"
 import { TURN_DEBOUNCE_MS } from "@/lib/assistant/turn-debounce"
+import type { PreviewTurnEvent } from "@/lib/assistant/preview/generate-reply"
 import { savePreviewAssistantMessageAction } from "./preview-actions"
 
 function extractTextParts(parts: unknown[]): string {
@@ -36,6 +37,12 @@ export function usePreviewConversation(args: {
 }) {
   const { assistantId, organizationId, sessionIdRef, onSessionsMutate, onReplyError } = args
   const [messages, setMessages] = useState<UIMessage[]>([])
+  /**
+   * What the turn recorded about the person — a name learned, a language
+   * settled. Kept beside the messages rather than among them: they are not
+   * things anyone said, and the model must never be handed them back.
+   */
+  const [events, setEvents] = useState<PreviewTurnEvent[]>([])
   const [status, setStatus] = useState<PreviewStatus>("ready")
   const abortRef = useRef<AbortController | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -82,9 +89,13 @@ export function usePreviewConversation(args: {
         throw new Error(await res.text())
       }
 
-      const data = (await res.json()) as { message: UIMessage }
+      const data = (await res.json()) as {
+        message: UIMessage
+        events?: PreviewTurnEvent[]
+      }
       const assistantMessage = data.message
 
+      if (data.events?.length) setEvents((prev) => [...prev, ...data.events!])
       setMessages((prev) => [...prev, assistantMessage])
 
       const body = extractTextParts(assistantMessage.parts as unknown[])
@@ -141,6 +152,7 @@ export function usePreviewConversation(args: {
     }
     setStatus("ready")
     setMessages([])
+    setEvents([])
   }, [clearScheduledReply])
 
   const bindSession = useCallback(
@@ -153,6 +165,7 @@ export function usePreviewConversation(args: {
   return {
     messages,
     setMessages,
+    events,
     status,
     busy,
     stop,

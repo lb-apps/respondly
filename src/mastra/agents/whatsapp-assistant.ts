@@ -13,6 +13,7 @@ import { sendLinkButtonTool } from "@/mastra/tools/send-link-button"
 import { flagSourceConflictTool } from "@/mastra/tools/flag-source-conflict"
 import { getContactProfileTool } from "@/mastra/tools/get-contact-profile"
 import { updateContactProfileTool } from "@/mastra/tools/update-contact-profile"
+import type { ContactRef } from "@/lib/contacts/profile-store"
 
 /**
  * Built-in tools every org gets. Live business data (availability, prices,
@@ -48,8 +49,11 @@ export interface AssistantRequestContext extends Record<string, unknown> {
   assistantId: string | null
   /** Set in the WhatsApp loop so tools can log claims; null in the sandbox. */
   conversationId: string | null
-  /** The person behind the conversation, for contact-profile read/write. Null in the sandbox. */
-  contactId: string | null
+  /**
+   * Where the person behind this turn lives, for contact-profile read/write:
+   * a real contact row on WhatsApp, a session-scoped persona in the preview.
+   */
+  contactRef: ContactRef | null
   /** Detected conversation locale (tr|en|de|ru) for tools and templated MCP params. */
   guestLocale: string
 }

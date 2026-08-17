@@ -11,6 +11,7 @@ import {
   MCP_STATUS_LABELS,
   MCP_STATUS_VARIANTS,
   recordToRows,
+  queryParamRows,
 } from "../schema"
 
 export default async function McpServerDetailPage({
@@ -71,7 +72,7 @@ export default async function McpServerDetailPage({
           authHeaderName: server.auth_header_name ?? "",
           secret: "",
           headers: recordToRows(server.headers),
-          queryParams: recordToRows(server.query_params),
+          queryParams: queryParamRows(server.query_params, server.link_params),
           timeoutMs: server.timeout_ms,
           enabled: server.enabled,
         }}

@@ -1204,3 +1204,148 @@ Vercel 308 ile HTTPS'e yolluyor, Cloudflare aynı HTTP isteğini tekrarlıyor �
 
 **Kalan (bu işin dışında):** zone'un `min_tls_version` değeri hâlâ **1.0**. 1.2'ye çekmek
 doğru olur ama zone geneli ve dışa dönük — ayrı karar.
+
+
+---
+
+# Kişiler sayfası (`/[slug]/contacts`)
+
+İletişime geçmiş herkesin kişi kartları: dikey kart grid'i, karttan düzenleme,
+arama. Elle kişi ekleme ve "konuşmaya git" aksiyonlarıyla.
+
+## Kararlar (kullanıcı onayladı)
+
+- **Avatar:** üretilen avatar (`ContactAvatar`, avvvatars, seed = telefon). DB'de
+  avatar kolonu yok, WhatsApp Cloud API müşteri fotoğrafı vermiyor. Migration yok.
+- **Düzenleme:** sağdan `Sheet` — `persona-editor-sheet.tsx` ile aynı iskelet,
+  gövde paylaşılan `ContactIdentityFields`.
+- **Aksiyonlar:** kartta "Konuşmaya git" (`/[slug]/inbox?c=…`) + araç çubuğunda
+  "Kişi ekle". WhatsApp linki ve silme bu turda yok.
+
+## Yapılacaklar
+
+### 0. Ön kontrol
+- [ ] `supabase-lba` MCP (ref `aikzddqglqxbybrairwa`) ile `contacts` RLS
+      politikalarını oku: select / insert / update ekip için açık mı, hangi
+      permission'a bağlı. Insert politikası yoksa migration ile ekle
+      (`contacts_write_inbox` ile aynı hizada, org-scoped).
+- [ ] `contacts` üzerinde `(organization_id, phone)` unique constraint var mı —
+      elle ekleme çakışmasını buna göre ele al.
+- [ ] Skill'ler: `react-best-practices` (her React değişikliği), `ui-ux-pro-max`
+      (token/ölçek kararları), `shadcn` (kullanılacak primitive'lerin dokümanı).
+
+### 1. Veri katmanı — `src/lib/supabase/queries/contacts.ts`
+- [ ] `ContactCard` tipi: id, name, firstName, lastName, phone, email,
+      nationality, country, preferredLanguage, tags, notes, createdAt,
+      lastSeenAt, updatedAt, conversationCount, lastConversationId.
+- [ ] `listContacts(orgId, { search, limit, offset })` → `{ rows, total }`.
+      RLS okumayı zaten org'a kısıtlıyor; org filtresi yine de açıkça yazılır.
+      Arama: ad / soyad / name / telefon / e-posta üzerinde `ilike`; telefon
+      araması girdiyi `normalizePhoneE164` ile de dener (boşluklu yazımı yakalar).
+      Sıralama `last_seen_at desc`, sayfa boyu 48.
+- [ ] Konuşma sayısı + son konuşma id'si: sayfadaki kişi id'leri için tek
+      `conversations` sorgusu, gruplama TS tarafında. N+1 yok.
+
+### 2. Yazma yolu — ortak `applyContactPatch`
+- [ ] `src/lib/contacts/update.ts`: kolon eşleme + before/after diff +
+      `recordContactProfileEvent` tek yerde. Bugün bu mantık
+      `app/[slug]/inbox/actions.ts:updateContact` içinde gömülü.
+- [ ] `conversationId` opsiyonel: verilmezse kişinin en son konuşması bulunur,
+      o da yoksa olay yazılmaz (kartın kendisi yine güncellenir).
+- [ ] `inbox/actions.ts:updateContact` bu fonksiyonun ince sarmalayıcısına döner
+      — davranışı birebir korunur (SOLID; iki kopya diff mantığı olmaz).
+
+### 3. Server action'lar — `src/app/[slug]/contacts/actions.ts`
+- [ ] `saveContactAction` — mevcut kişiyi günceller (`applyContactPatch`),
+      `revalidatePath('/[slug]/contacts')`.
+- [ ] `createContactAction` — zod: telefon zorunlu, `normalizePhoneE164` ile
+      E.164'e çevrilir; aynı org'da aynı telefon varsa hata yerine mevcut kartı
+      döndürür ("bu kişi zaten var" bilgisiyle).
+- [ ] `loadContactsPage` — arama + sayfalama için client'tan çağrılan okuma.
+- [ ] Hepsi `ActionResult` biçimini korur, auth kontrolü inbox action'larıyla aynı.
+
+### 4. UI — `src/app/[slug]/contacts/`
+- [ ] `layout.tsx` — diğer sayfalarla aynı `flex h-full min-h-0 flex-col`.
+- [ ] `page.tsx` (RSC) — org çözümü, ilk sayfa + toplam sayı, `ContactsClient`.
+- [ ] `contacts-client.tsx` — başlık şeridi (`SidebarTrigger` + "Kişiler" +
+      toplam), araç çubuğu (arama input'u `use-debounced-value` ile, "Kişi ekle"),
+      responsive grid (`sm:2 md:3 lg:4 xl:5`), "Daha fazla yükle", boş durumlar
+      (hiç kişi yok / arama sonucu yok) `Empty` primitive'iyle.
+- [ ] `contact-card.tsx` — dikey kart: üstte daire avatar (`ContactAvatar`
+      `size="xl"`), altında ad soyad (yoksa telefon), telefon
+      (`formatPhoneDisplay`), etiket rozetleri, alt meta satırı (konuşma sayısı ·
+      son görülme). Tüm kart "düzenle"yi açan bir buton; "Konuşmaya git" ayrı
+      link olarak kartın altında (iç içe interaktif eleman yok).
+- [ ] `contact-editor-sheet.tsx` — `Sheet` + `ContactIdentityFields`. Mevcut
+      kişide telefon salt okunur `Input`, yeni kişide `PhoneInput`. Kaydet →
+      action → toast → liste güncellenir. Taslak sıfırlaması `key` ile
+      (Effect ile prop→state senkronu yok).
+- [ ] Kart yüzeyi tek bir paylaşılan sabitte (`CONTACT_CARD_SURFACE`) — iskelet
+      onu tekrar kullanır.
+- [ ] `contacts-skeleton.tsx` — gerçek kartın aynısı, içeriği yerine placeholder.
+      Ölçüler tip ölçeğinden (`h-[1lh]`), tahmini piksel yok.
+- [ ] Renkler yalnız shadcn semantik token'ları; ham Tailwind paleti yok.
+
+### 5. Navigasyon
+- [ ] `app-sidebar.tsx` birincil grup: Gelen Kutusu → **Kişiler** (`Users` ikonu,
+      `module: "inbox"`) → WhatsApp.
+
+### 6. Doğrulama
+- [ ] `npx tsc --noEmit` ve `npm run lint` temiz.
+- [ ] Dev sunucu + tarayıcı: liste, arama (isim / telefon / e-posta), düzenle-kaydet,
+      elle ekleme, "konuşmaya git", boş durum, dar ekran.
+- [ ] İskelet ↔ yüklenmiş kart: `getBoundingClientRect()` ile ölçüp karşılaştır,
+      göz kararı değil.
+- [ ] Çoklu kiracı: başka org'un kişisi ne listede ne de doğrudan action'la
+      erişilebilir.
+
+## Review (2026-08-18)
+
+Hepsi yapıldı, `/my-dora-hotel/contacts` üzerinde çalışır durumda doğrulandı.
+
+**Ön kontrolde çıkanlar:** `contacts_write_inbox` politikası zaten `ALL` +
+`inbox.access` → insert için migration gerekmedi. `contacts_org_phone_idx`
+unique (organization_id, phone) mevcut → elle eklemede çakışma DB'den geliyor,
+uygulama tarafında ön kontrol yok.
+
+**Dosyalar**
+- `src/lib/supabase/queries/contacts.ts` — `ContactCard`, `listContacts`,
+  `getContactCard`, sayfa başına tek konuşma-istatistiği sorgusu.
+- `src/lib/contacts/update.ts` — `applyContactPatch` + `contactPatchSchema` +
+  `actorDisplayName`; inbox action'ından çıkarıldı, ikisi de bunu çağırıyor.
+- `src/app/[slug]/contacts/` — `page`, `layout`, `actions`, `contacts-client`,
+  `contact-card`, `contact-editor-sheet`.
+- `src/components/app-sidebar.tsx` — Gelen Kutusu ↔ WhatsApp arasına "Kişiler".
+- `src/lib/format/datetime.ts` — `formatDateTr`.
+- `CLAUDE.md` — React ve UI tasarımı için skill kuralları (kullanıcı isteği).
+
+**Uygulama sırasında değişen kararlar**
+- Grid sabit kolon sayısı yerine `auto-fill / minmax(15.5rem, 1fr)` — kullanıcı
+  kartların daha geniş olmasını istedi; telefonda tek kolon, geniş ekranda beş.
+- Telefon araması `normalizePhoneE164` ile değil, rakamlara indirgeyip baştaki
+  sıfırı atarak yapılıyor. Yazılan "0536 286 29" normalize edilince
+  "+053628629" oluyor ve hiçbir şeyle eşleşmiyordu; rakam eşlemesi
+  "+905362862998" satırını buluyor. En az 3 rakam şartı var, yoksa isim
+  aramaları da telefon deseni üretiyordu.
+
+**Bulunup düzeltilen iki hata**
+- Kaydetme sonrası sayaç iki artıyordu: `setTotal` bir state updater'ının içinde
+  çağrılıyordu ve React updater'ı iki kez çalıştırıyor. Updater saf bırakıldı.
+- İskelet gerçek karttan 2.13px uzundu (`gap-1` ↔ `gap-0.5`).
+  `getBoundingClientRect()` ile ölçüldü, düzeltildi, yeniden ölçüldü: ikisi de
+  342.664 × 217.602.
+
+**Doğrulama**
+- `npx tsc --noEmit` ve `npm run lint`: bu değişikliklerde temiz (kalan uyarılar
+  daha önceden var olan dosyalarda).
+- Tarayıcıda: liste, isim araması, boşluklu telefon araması, düzenle-kaydet
+  (+ thread'e "kişi kartını güncelledi" satırı düştü), elle ekleme, aynı
+  numarayla ikinci ekleme (mevcut kart döndü, sayaç artmadı), boş durum,
+  375px genişlik.
+- Test için eklenen `+905001112233` kaydı silindi.
+
+**Yapılmayan / bilinen sınır**
+- Çapraz-org izolasyonu canlı veriyle test edilemedi: veritabanında tek
+  organizasyon var. Yol kod tarafında kapalı — okuma `.eq(organization_id)` +
+  RLS `contacts_select_inbox`, yazma `contacts_write_inbox`.
+- Kişi silme ve karttan WhatsApp linki bu turda kapsam dışı (kullanıcı kararı).
