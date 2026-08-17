@@ -30,6 +30,8 @@
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
+  --color-bubble-sent-foreground: var(--bubble-sent-foreground);
+  --color-bubble-sent: var(--bubble-sent);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
@@ -57,6 +59,9 @@
   --popover-foreground: oklch(0.148 0.004 228.8);
   --primary: oklch(0.457 0.24 277.023);
   --primary-foreground: oklch(0.962 0.018 272.314);
+  /* A message we sent. Primary's hue, a fraction of its chroma — see `.dark`. */
+  --bubble-sent: oklch(0.93 0.055 277);
+  --bubble-sent-foreground: oklch(0.32 0.09 277);
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.963 0.002 197.1);
@@ -104,6 +109,23 @@
   --popover-foreground: oklch(0.987 0.002 197.1);
   --primary: oklch(0.398 0.195 277.366);
   --primary-foreground: oklch(0.962 0.018 272.314);
+  /*
+   * A message we sent — a surface, not an action.
+   *
+   * It used to *be* `--primary`, which put the screen's loudest colour on its
+   * most repeated element: thirty filled violet slabs down one column, while
+   * the single button inside a message (the booking link) wore the very same
+   * fill and stopped reading as a button at all.
+   *
+   * So it keeps primary's hue — the message is still visibly ours — and gives
+   * up most of its chroma. Lightness is the wrong lever in the dark theme:
+   * the sent bubble has to sit between the card behind it (L .218) and the
+   * button in front of it (L .398), so there is barely a stop of luminance to
+   * spend either way. Chroma is where the room is, and at .045 against
+   * primary's .195 the button is four times the more saturated of the two.
+   */
+  --bubble-sent: oklch(0.3 0.045 277);
+  --bubble-sent-foreground: oklch(0.96 0.012 277);
   --secondary: oklch(0.274 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.275 0.011 216.9);

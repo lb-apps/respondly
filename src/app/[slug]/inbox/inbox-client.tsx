@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -18,7 +17,6 @@ import {
   ExternalLink,
   Headset,
   Inbox as InboxIcon,
-  MapPin,
   MoreVertical,
   PanelRightClose,
   PanelRightOpen,
@@ -39,11 +37,10 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
-import { MessageChips } from "@/components/chat/message-chips"
 import { getSourceDetailAction } from "@/app/[slug]/knowledge/actions"
 import { SourceDetailSheet } from "@/app/[slug]/knowledge/source-detail-sheet"
 import type { SourceDetail } from "@/lib/supabase/queries/knowledge"
@@ -82,54 +79,32 @@ import { useInboxConversationList } from "@/hooks/use-inbox-conversation-list"
 import type {
   ConversationListItem,
   ConversationThread,
-  ThreadAttachment,
   ThreadCursor,
   ThreadMessage,
-  ThreadSender,
 } from "@/lib/supabase/queries/inbox"
 import type { ContactDetail } from "@/lib/supabase/queries/contacts"
 import { formatPhoneDisplay, toWhatsAppHref } from "@/lib/phone"
+// The one clock in the app: the preview renders its bylines with this too, so
+// a message reads the same hour on both surfaces.
+import { formatClockTr } from "@/lib/format/datetime"
 import {
   channelLabel,
   formatWaitDuration,
-  groupByDay,
-  initials,
   isAssistantTyping,
   mergeThreadMessages,
   TURN_LOCK_TTL_MS,
 } from "@/lib/inbox/list-utils"
 import { ContactDetailPanel } from "./contact-detail-panel"
 import { ConversationList } from "./conversation-list"
-import { ChatAttachmentGrid } from "@/components/chat/chat-attachments"
-import {
-  Carousel,
-  CarouselContent,
-  CarouselItem,
-} from "@/components/ui/carousel"
-import {
-  toCarouselMessage,
-  type CarouselCardView,
-} from "@/lib/whatsapp/carousel-message"
-import { toChoiceMessage, type ChoiceMessage } from "@/lib/whatsapp/choice-message"
-import { formatAssistantMessageText, extractImageUrls } from "@/lib/assistant/format-text"
-import { WhatsAppFormattedText } from "@/components/chat/whatsapp-formatted-text"
-import { StickyDayHeading } from "@/components/chat/sticky-day-heading"
-import {
-  Bubble,
-  MessageMeta,
-  MessageRow,
-  type MessageSide,
-  type MessageSpeaker,
-} from "@/components/chat/message-row"
+import { inboxThreadRows } from "./thread-rows"
+import { ThreadView } from "@/components/chat/thread-view"
 import {
   ThreadColumn,
   ThreadDayGroup,
-  ThreadScroller,
-  ThreadTypingIndicator,
+  THREAD_SURFACE,
 } from "@/components/chat/thread-surface"
 import { pinScrollFromBottom, type ScrollPin } from "@/lib/inbox/pin-scroll"
-import { ThreadEventDivider } from "@/components/chat/thread-event-divider"
-import { RemoteImage } from "@/components/remote-image"
+import { ThreadMessagesSkeleton } from "@/components/chat/thread-messages-skeleton"
 import {
   closeConversation,
   loadOlderMessages,
@@ -150,13 +125,6 @@ interface Props {
   contactDetail: ContactDetail | null
 }
 
-function formatTime(iso: string): string {
-  return new Intl.DateTimeFormat("tr-TR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(iso))
-}
-
 export function InboxClient({
   slug,
   organizationId,
@@ -167,6 +135,14 @@ export function InboxClient({
 }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  /**
+   * The thread a click has asked for, paired with the thread that was open when
+   * it was made. See `pendingSelection` below for why the pair.
+   */
+  const [pendingId, setPendingId] = useState<{
+    id: string
+    from: string | null
+  } | null>(null)
   const [draft, setDraft] = useState("")
   // The contact card is an overlay at every width, never a column.
   //
@@ -219,15 +195,52 @@ export function InboxClient({
     void markConversationRead({ conversationId: activeId, slug })
   }, [activeId, slug, conversations])
 
+  // Whether the click is still outstanding is derived, not synced: an Effect
+  // clearing it on `activeId` would re-render the whole inbox a second time on
+  // arrival, right when the new thread is being painted.
+  //
+  // `from` is what makes it self-expiring. The selection is only outstanding
+  // while the server is still showing the thread it was made from — once
+  // `activeId` is the requested thread the click has landed, and if it moves
+  // anywhere else (Back/Forward, a realtime refresh) the click is void.
+  const pendingSelection =
+    pendingId && pendingId.id !== activeId && pendingId.from === activeId
+      ? pendingId.id
+      : null
+
+  // What the list draws as selected. Ahead of the server while a thread is
+  // opening, identical to it the rest of the time.
+  const selectedId = pendingSelection ?? activeId
+  // The open thread is the previous one until the payload lands. Showing it
+  // under a freshly-selected row would attribute one guest's messages to
+  // another, which is worse than showing nothing.
+  const threadStale = pendingSelection != null
+
+  // The breadcrumb names the thread being opened, not the one being left. The
+  // list row already holds the name, so this costs no round trip.
+  const headerConversation = pendingSelection
+    ? (listConversations.find((c) => c.id === pendingSelection) ?? null)
+    : (thread?.conversation ?? null)
+
   function togglePanel() {
     setDetailOpen((open) => !open)
   }
 
   function select(id: string) {
+    if (id === activeId) return
     setReadOverrides((prev) => ({ ...prev, [id]: 0 }))
-    startTransition(async () => {
-      await markConversationRead({ conversationId: id, slug })
-    })
+
+    // The row highlights on the click, not on the server's answer. `activeId`
+    // arrives with the RSC payload a round trip later, and until this was held
+    // locally the whole inbox sat unchanged after a click — the thread that was
+    // already open stayed lit, and nothing said the new one was on its way.
+    setPendingId({ id, from: activeId })
+
+    // Marking read is bookkeeping the reader never waits for. Awaited inside a
+    // transition it held the pending state open for the length of its own round
+    // trip, on top of the navigation's.
+    void markConversationRead({ conversationId: id, slug })
+
     router.push(`/${slug}/inbox?c=${id}`)
   }
 
@@ -306,13 +319,13 @@ export function InboxClient({
                   so there is no emptier version of this page to go back to. */}
               <BreadcrumbPage>Gelen Kutusu</BreadcrumbPage>
             </BreadcrumbItem>
-            {thread ? (
+            {headerConversation ? (
               <>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
                   <BreadcrumbPage>
-                    {thread.conversation.guestName ||
-                      formatPhoneDisplay(thread.conversation.guestPhone)}
+                    {headerConversation.guestName ||
+                      formatPhoneDisplay(headerConversation.guestPhone)}
                   </BreadcrumbPage>
                 </BreadcrumbItem>
               </>
@@ -324,13 +337,15 @@ export function InboxClient({
       <div className="flex min-h-0 flex-1">
       <ConversationList
         conversations={listConversations}
-        activeId={activeId}
+        activeId={selectedId}
         onSelect={select}
         onTogglePin={handleTogglePin}
       />
 
       {/* Thread */}
-      {thread ? (
+      {threadStale ? (
+        <ThreadSkeleton />
+      ) : thread ? (
         <ConversationPane
           key={thread.conversation.id}
           thread={thread}
@@ -399,6 +414,90 @@ export function InboxClient({
   )
 }
 
+/**
+ * The shape of the thread being opened, drawn from the same parts as the thread
+ * itself.
+ *
+ * Built out of `MessageRow` and `Bubble` rather than a hand-rolled stack of
+ * grey boxes: the row grid, the avatar column, the measure, the tail corner and
+ * the byline are then identical by construction, and stay identical when any of
+ * them is changed. Nothing here is allowed to guess a size.
+ *
+ * Each bubble is sized by empty lines of its own text — `h-[1lh]` against the
+ * bubble's own `text-sm leading-relaxed` — so a two-line placeholder occupies
+ * exactly what two lines of message will. The pane does not reflow when the
+ * real conversation lands on top of it.
+ */
+
+function ThreadSkeleton() {
+  return (
+    <section
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      // Busy, not a live region: the messages announce themselves once the
+      // thread renders, and a placeholder has nothing to read out.
+      aria-busy="true"
+      aria-label="Konuşma yükleniyor"
+    >
+      <header className="flex h-[68px] shrink-0 items-center gap-3 px-4 sm:px-6">
+        <Skeleton className="size-9 shrink-0 rounded-full" />
+        <div className="flex min-w-0 flex-col gap-1">
+          {/* `1lh` resolves against the type scale set on the element itself,
+              so these are the name and subtitle lines to the pixel. */}
+          <Skeleton className="h-[1lh] w-40 rounded-md text-sm leading-tight" />
+          <Skeleton className="h-[1lh] w-28 rounded-md text-xs" />
+        </div>
+      </header>
+      <Separator />
+
+      {/* The thread's surface without its scroller. A thread is read at its
+          newest end, so the placeholder has to sit on the bottom edge the way a
+          conversation scrolled to its latest message does — starting at the top
+          and trailing off into empty space is a shape no thread ever has. The
+          scroll machinery is what makes that awkward (Radix owns the box in
+          between), and a placeholder has nothing to scroll, so it stands on the
+          same surface and skips the rest. */}
+      <div className={cn(THREAD_SURFACE, "flex flex-col justify-end overflow-hidden")}>
+        {/* `w-full` because this parent is a flex column and `ThreadColumn`
+            carries `mx-auto`: auto margins on the cross axis cancel `stretch`,
+            which shrank the column to its content and pulled the whole
+            conversation 50px in from both gutters. Under the real scroller the
+            column's parent is a block, where `mx-auto` simply centres a
+            full-width box. */}
+        <ThreadColumn className="w-full">
+          <ThreadDayGroup>
+            <ThreadMessagesSkeleton />
+          </ThreadDayGroup>
+        </ThreadColumn>
+      </div>
+
+      <Separator />
+      <div className="px-6 py-4">
+        <InputGroup className="mx-auto h-auto max-w-3xl items-end">
+          <InputGroupTextarea
+            placeholder=""
+            disabled
+            className="min-h-10"
+            rows={1}
+            aria-hidden
+            tabIndex={-1}
+          />
+          {/* The send button is what the composer takes its height from — left
+              out, the whole bar sat 4px short of the real one. */}
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton size="icon-sm" disabled aria-hidden tabIndex={-1}>
+              <SendHorizontal className="size-4" />
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+        <p className="text-muted-foreground mx-auto mt-2 flex max-w-3xl items-center gap-1 text-xs">
+          <CornerDownLeft className="size-3" /> Göndermek için ⌘/Ctrl + Enter.
+          Yanıt yazınca konuşma ekibe geçer.
+        </p>
+      </div>
+    </section>
+  )
+}
+
 interface PaneProps {
   thread: ConversationThread
   /** When the running assistant turn took its lock, or null if none is. */
@@ -452,9 +551,6 @@ function ConversationPane({
   }
 
   const messages = loadedPages
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const topSentinelRef = useRef<HTMLDivElement>(null)
-  const viewportRef = useRef<HTMLElement | null>(null)
   /**
    * Holds the reader's place while an older page is being added above them.
    * Live for the whole insertion — the spinner, the messages, then the photos
@@ -486,16 +582,16 @@ function ConversationPane({
     }
   }
 
-  const dayGroups = useMemo(
-    () => groupByDay(messages, (m) => m.createdAt),
-    [messages]
+  const guestPhone = conversation.guestPhone
+  const rows = useMemo(
+    () => inboxThreadRows(messages, { phone: guestPhone }),
+    [messages, guestPhone]
   )
 
   const conversationId = conversation.id
 
-  const loadOlder = useCallback(async () => {
+  const loadOlder = useCallback(async (viewport: HTMLElement | null) => {
     if (!cursor || loadingOlder) return
-    const viewport = viewportRef.current
     // Pinned from the moment the page is asked for, because the first thing to
     // move the reader is the spinner appearing above them — before any message
     // has arrived to render.
@@ -523,37 +619,10 @@ function ConversationPane({
     }
   }, [conversationId, cursor, loadingOlder])
 
-  // Ask for the next page while the top of the thread is still a screen away,
-  // so the reader meets messages rather than a spinner. An observer rather than
-  // a scroll handler: the browser decides when to tell us, no per-frame work.
-  useEffect(() => {
-    const sentinel = topSentinelRef.current
-    if (!sentinel || !cursor) return
-
-    const root = sentinel.closest<HTMLElement>("[data-slot=scroll-area-viewport]")
-    if (!root) return
-    viewportRef.current = root
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) void loadOlder()
-      },
-      { root, rootMargin: "600px 0px 0px 0px", threshold: 0 }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [cursor, loadOlder])
-
-  // The browser's own scroll anchoring would compensate for the same insertion
-  // a second time, on top of the pin, and the view would move twice as far.
-  // `overflow-anchor: none` on the viewport (see the ScrollArea below) hands
-  // the job to the pin alone — and to Safari, which has no scroll anchoring to
-  // undo in the first place, it changes nothing.
+  // A history pin outlives the render that started it, so leaving the thread
+  // mid-insert would leave it holding a viewport that is no longer on screen.
   useEffect(() => () => pinRef.current?.release(), [])
 
-  // Jump to the newest message when one arrives — keyed on its id, not on the
-  // count: prepending a page of history also changes the count, and scrolling
-  // to the bottom then would throw the reader out of the place they scrolled to.
   // The lock is only believed as long as the claim believes it: a turn that died
   // leaves its timestamp behind, and "yazıyor…" would hang there forever. One
   // re-render scheduled at expiry retires the line on its own.
@@ -566,14 +635,6 @@ function ConversationPane({
     const timer = setTimeout(() => setClockTick(Date.now()), Math.max(0, expiresIn))
     return () => clearTimeout(timer)
   }, [turnLockedAt])
-
-  const latestMessageId = messages[messages.length - 1]?.id
-  useEffect(() => {
-    // Never while a page of history is being inserted: the reader is up there
-    // reading it, and the newest message is not what they asked for.
-    if (pinRef.current?.active) return
-    bottomRef.current?.scrollIntoView({ block: "end" })
-  }, [latestMessageId])
 
   const isClosed = conversation.status === "closed"
   const isBot = conversation.status === "bot"
@@ -746,58 +807,14 @@ function ConversationPane({
         onJump={jumpToMessage}
       />
 
-      <ThreadScroller>
-        <ThreadColumn>
-          {/* Where the thread continues upwards. The sentinel sits above the
-              spinner so it enters the viewport first and the page is already
-              on its way by the time anything is shown. */}
-          <div ref={topSentinelRef} aria-hidden className="h-px w-full shrink-0" />
-          {loadingOlder ? (
-            <div
-              className="flex justify-center pb-4"
-              role="status"
-              aria-label="Eski mesajlar yükleniyor"
-            >
-              <Spinner className="text-muted-foreground" />
-            </div>
-          ) : null}
-          {dayGroups.map((group) => (
-            <ThreadDayGroup key={group.key}>
-              <StickyDayHeading label={group.label} />
-              {group.items.map((m) =>
-                m.event ? (
-                  <ThreadEventDivider
-                    key={m.id}
-                    kind={m.event.kind}
-                    actorName={m.sender?.name}
-                    createdAt={m.createdAt}
-                  />
-                ) : (
-                <MessageBubble
-                  key={m.id}
-                  messageId={m.id}
-                  role={m.role}
-                  body={m.body}
-                  type={m.type}
-                  createdAt={m.createdAt}
-                  richContent={m.richContent}
-                  toolTrace={m.toolTrace}
-                  onSourceClick={handleSourceClick}
-                  onConflictSourceClick={handleConflictSourceClick}
-                  attachments={m.attachments}
-                  sender={m.sender}
-                  guestName={conversation.guestName}
-                  guestPhone={conversation.guestPhone}
-                  avatarSeed={conversation.guestPhone}
-                />
-                )
-              )}
-            </ThreadDayGroup>
-          ))}
-          {assistantTyping ? <ThreadTypingIndicator /> : null}
-          <div ref={bottomRef} />
-        </ThreadColumn>
-      </ThreadScroller>
+      <ThreadView
+        rows={rows}
+        typingSide={assistantTyping ? "end" : null}
+        onLoadOlder={cursor ? loadOlder : undefined}
+        loadingOlder={loadingOlder}
+        onSourceClick={handleSourceClick}
+        onConflictSourceClick={handleConflictSourceClick}
+      />
 
       <Separator />
       <div className="px-6 py-4">
@@ -903,8 +920,13 @@ function ThreadSearchDialog({
                 <span className="text-muted-foreground text-xs">
                   {m.role === "assistant" || m.role === "staff"
                     ? "Biz"
-                    : "Misafir"}{" "}
-                  · {formatTime(m.createdAt)}
+                    : // A `system` row is something that happened to the
+                      // conversation, not something the guest said. Without
+                      // this it was attributed to them.
+                      m.role === "system"
+                      ? "Sistem"
+                      : "Misafir"}{" "}
+                  · {formatClockTr(m.createdAt)}
                 </span>
                 <span className="line-clamp-2 text-sm">{m.body}</span>
               </CommandItem>
@@ -916,376 +938,3 @@ function ThreadSearchDialog({
     </CommandDialog>
   )
 }
-
-type InboxRichItem =
-  | { type: "image"; imageUrl: string; caption?: string }
-  | { type: "quick_reply"; body: string; buttons: string[] }
-  | { type: "cta"; body: string; url: string }
-  | { type: "carousel"; body: string; cards: CarouselCardView[] }
-  | ChoiceMessage
-  | { type: "location_request"; body: string }
-  | {
-      type: "location"
-      latitude: number
-      longitude: number
-      name?: string
-      address?: string
-    }
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null
-}
-
-function parseRichContent(raw: unknown[] | null | undefined): InboxRichItem[] {
-  if (!raw) return []
-  const items: InboxRichItem[] = []
-  for (const entry of raw) {
-    const r = asRecord(entry)
-    if (!r) continue
-    if (r.type === "image" && typeof r.imageUrl === "string") {
-      // Captions only exist on rows stored before they were dropped; new
-      // messages send the picture on its own.
-      const caption = typeof r.caption === "string" ? r.caption : undefined
-      items.push({ type: "image", imageUrl: r.imageUrl, caption })
-    } else if (r.type === "quick_reply" && Array.isArray(r.buttons)) {
-      items.push({
-        type: "quick_reply",
-        body: typeof r.body === "string" ? r.body : "",
-        buttons: (r.buttons as unknown[]).filter((b): b is string => typeof b === "string"),
-      })
-    } else if (r.type === "cta" && typeof r.url === "string") {
-      items.push({ type: "cta", body: typeof r.body === "string" ? r.body : "", url: r.url })
-    } else if (r.type === "carousel") {
-      // Stored exactly as it was sent, so the same reader that built the
-      // message rebuilds it here — staff see the cards the guest saw.
-      const carousel = toCarouselMessage(r)
-      if (carousel) items.push(carousel)
-    } else if (r.type === "choice") {
-      // Same one-reader-two-renderers pattern as the carousel above.
-      const choice = toChoiceMessage(r)
-      if (choice) items.push(choice)
-    } else if (r.type === "location_request") {
-      items.push({
-        type: "location_request",
-        body: typeof r.body === "string" ? r.body : "",
-      })
-    } else if (
-      r.type === "location" &&
-      typeof r.latitude === "number" &&
-      typeof r.longitude === "number"
-    ) {
-      items.push({
-        type: "location",
-        latitude: r.latitude,
-        longitude: r.longitude,
-        name: typeof r.name === "string" ? r.name : undefined,
-        address: typeof r.address === "string" ? r.address : undefined,
-      })
-    }
-  }
-  return items
-}
-
-/**
- * How long the scroll anchor is held after older messages are prepended — long
- * enough for the images in them to decode and settle, short enough that it can
- * never fight a scroll the reader makes themselves.
- */
-
-
-const MessageBubble = memo(function MessageBubble({
-  messageId,
-  role,
-  body,
-  createdAt,
-  richContent,
-  toolTrace,
-  onSourceClick,
-  onConflictSourceClick,
-  attachments = [],
-  guestName,
-  guestPhone,
-  avatarSeed,
-  sender,
-}: {
-  messageId: string
-  role: string
-  body: string
-  type?: string
-  createdAt: string
-  richContent?: unknown[] | null
-  toolTrace?: unknown[] | null
-  onSourceClick?: (id: string) => void
-  onConflictSourceClick?: (sourceId: string, highlight: string) => void
-  attachments?: ThreadAttachment[]
-  guestName: string | null
-  guestPhone: string
-  /** Seeds the guest's generated avatar — their phone number, so it never
-   *  changes with the conversation it appears in. */
-  avatarSeed: string
-  /** The teammate who wrote this, when a person did. */
-  sender?: ThreadSender | null
-}) {
-  const isGuest = role === "guest"
-  const isSystem = role === "system"
-
-  if (isSystem) {
-    return (
-      <div className="text-muted-foreground py-1 text-center text-xs">{body}</div>
-    )
-  }
-
-  const richItems = isGuest ? [] : parseRichContent(richContent)
-  const textImageUrls = isGuest || role === "staff" ? [] : extractImageUrls(body)
-  const mergedRichItems =
-    textImageUrls.length > 0
-      ? [
-          ...richItems,
-          ...textImageUrls
-            .filter(
-              (url) =>
-                !richItems.some(
-                  (r) => r.type === "image" && r.imageUrl === url
-                )
-            )
-            .map((url) => ({ type: "image" as const, imageUrl: url, caption: "" })),
-        ]
-      : richItems
-  const displayBody =
-    isGuest || role === "staff"
-      ? body
-      : formatAssistantMessageText(body, mergedRichItems)
-
-  // Who is answering, said once and read two ways: the avatar carries it at a
-  // glance, the line under the bubble spells it out. A person gets their own
-  // photo — two similar glyphs in the same grey circle were not a distinction.
-  const isStaff = role === "staff"
-  const senderName = isStaff ? (sender?.name ?? null) : null
-  const senderLabel = isStaff ? (senderName ?? "Ekip") : "Asistan"
-  const outboundIcon =
-    isStaff && !senderName ? (
-      <Headset className="size-3.5" />
-    ) : isStaff ? (
-      initials(senderName, "")
-    ) : (
-      <Bot className="size-3.5" />
-    )
-
-  const side: MessageSide = isGuest ? "start" : "end"
-  const speaker: MessageSpeaker = isGuest ? "contact" : "business"
-
-  const messageBody = (
-    <>
-      {attachments.length > 0 && (
-        <ChatAttachmentGrid
-          attachments={attachments.map((a) => ({
-            kind: a.kind as "image" | "document",
-            filename: a.filename,
-            mimeType: a.mimeType,
-            signedUrl: a.signedUrl,
-          }))}
-        />
-      )}
-      {displayBody ? (
-        <Bubble speaker={speaker} side={side}>
-          <WhatsAppFormattedText text={displayBody} />
-        </Bubble>
-      ) : null}
-      {mergedRichItems.map((item, i) => {
-        if (item.type === "image") {
-          return (
-            <div
-              key={i}
-              className={cn(
-                "overflow-hidden",
-                isGuest
-                  ? "rounded-2xl rounded-bl-sm border border-border bg-card"
-                  : "rounded-2xl rounded-br-sm bg-primary"
-              )}
-            >
-              <RemoteImage
-                src={item.imageUrl}
-                alt={item.caption}
-                className="max-h-48 w-full object-cover"
-              />
-              {item.caption ? (
-                <div className="text-muted-foreground border-t px-4 py-2 text-xs">
-                  <WhatsAppFormattedText text={item.caption} />
-                </div>
-              ) : null}
-            </div>
-          )
-        }
-        if (item.type === "quick_reply") {
-          return (
-            <div key={i} className="flex flex-wrap gap-2">
-              {item.buttons.map((b) => (
-                <span
-                  key={b}
-                  className="rounded-full border border-border/80 bg-background px-3 py-1 text-xs text-muted-foreground"
-                >
-                  {b}
-                </span>
-              ))}
-            </div>
-          )
-        }
-        if (item.type === "carousel") {
-          return (
-            <Carousel
-              key={i}
-              opts={{ align: "start", dragFree: true, containScroll: "trimSnaps" }}
-              className="w-full min-w-0"
-            >
-              <CarouselContent className="-ml-2">
-                {item.cards.map((card) => (
-                  <CarouselItem key={card.id} className="basis-44 pl-2">
-                    <div className="border-border flex h-full flex-col overflow-hidden rounded-2xl border">
-                      <RemoteImage
-                        src={card.imageUrl}
-                        className="h-24 w-full object-cover"
-                      />
-                      {card.body ? (
-                        <div className="bg-card text-card-foreground grow px-2.5 py-2 text-xs">
-                          <WhatsAppFormattedText text={card.body} />
-                        </div>
-                      ) : null}
-                      {card.buttons.map((button) => (
-                        <span
-                          key={button.label}
-                          className="bg-card text-primary border-t px-2.5 py-2 text-center text-xs font-medium"
-                        >
-                          {button.label}
-                        </span>
-                      ))}
-                    </div>
-                  </CarouselItem>
-                ))}
-              </CarouselContent>
-            </Carousel>
-          )
-        }
-        if (item.type === "cta") {
-          return (
-            <a
-              key={i}
-              href={item.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground"
-            >
-              Rezervasyon Yap <ExternalLink className="size-3" />
-            </a>
-          )
-        }
-        if (item.type === "choice") {
-          // Static on purpose: staff are reading what the guest was offered,
-          // not answering it.
-          return (
-            <div key={i} className="flex flex-col gap-1.5">
-              {item.body ? (
-                <Bubble speaker={speaker} side={side}>
-                  <WhatsAppFormattedText text={item.body} />
-                </Bubble>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                {item.options.map((option) => (
-                  <span
-                    key={option.id}
-                    className="border-border/80 bg-background text-muted-foreground rounded-full border px-3 py-1 text-xs"
-                  >
-                    {option.label}
-                    {option.description ? (
-                      <span className="text-muted-foreground/70"> · {option.description}</span>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )
-        }
-        if (item.type === "location") {
-          const label = item.name || item.address || "Konum"
-          return (
-            <a
-              key={i}
-              href={`https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="border-border bg-card flex items-start gap-2 rounded-2xl border px-3 py-2 text-xs"
-            >
-              <MapPin className="text-muted-foreground mt-0.5 size-3.5 shrink-0" />
-              <span className="min-w-0">
-                <span className="block truncate font-medium">{label}</span>
-                {item.address && item.address !== label ? (
-                  <span className="text-muted-foreground line-clamp-2">{item.address}</span>
-                ) : null}
-              </span>
-            </a>
-          )
-        }
-        if (item.type === "location_request") {
-          return (
-            <div key={i} className="flex flex-col gap-1.5">
-              {item.body ? (
-                <Bubble speaker={speaker} side={side}>
-                  <WhatsAppFormattedText text={item.body} />
-                </Bubble>
-              ) : null}
-              <span className="border-border/80 bg-background text-muted-foreground inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs">
-                <MapPin className="size-3" /> Konum isteği
-              </span>
-            </div>
-          )
-        }
-        return null
-      })}
-      {!isGuest && role !== "staff" && (
-        // Same component the preview renders, fed from `messages.tool_trace`
-        // instead of a live turn's parts — one implementation, so the two
-        // surfaces cannot drift.
-        <MessageChips
-          parts={toolTrace ?? []}
-          onSourceClick={onSourceClick}
-          onConflictSourceClick={onConflictSourceClick}
-        />
-      )}
-    </>
-  )
-
-  return (
-    <MessageRow
-      id={`msg-${messageId}`}
-      side={side}
-      avatar={
-        isGuest ? (
-          <ContactAvatar variant="plain" size="sm" seed={avatarSeed} />
-        ) : (
-          <ContactAvatar
-            variant="plain"
-            size="sm"
-            seed={isStaff && senderName ? senderName : undefined}
-            imageUrl={isStaff ? sender?.avatarUrl : null}
-            imageAlt={senderName ?? ""}
-            fallbackClassName={
-              isStaff && senderName ? undefined : "bg-muted text-muted-foreground"
-            }
-          >
-            {outboundIcon}
-          </ContactAvatar>
-        )
-      }
-      meta={
-        // The guest needs no byline: the avatar and the side already say it is
-        // them. Which of us answered is not so obvious, so that side is named.
-        <MessageMeta
-          label={isGuest ? null : senderLabel}
-          time={formatTime(createdAt)}
-          dateTime={createdAt}
-        />
-      }
-    >
-      {messageBody}
-    </MessageRow>
-  )
-})

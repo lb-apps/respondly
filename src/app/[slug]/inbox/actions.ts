@@ -6,12 +6,15 @@ import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { sendWhatsAppMessage } from "@/lib/whatsapp/cloud-api/client"
 import { insertMessage, setConversationStatus } from "@/lib/whatsapp/conversation"
-import { recordHandoffEvent } from "@/lib/inbox/record-handoff-event"
-import type { HandoffEventKind } from "@/lib/inbox/handoff-events"
-import { GUEST_LOCALES } from "@/lib/i18n/guest-locale"
+import { recordHandoffEvent } from "@/lib/inbox/record-thread-event"
+import type { HandoffEventKind } from "@/lib/inbox/thread-events"
+import {
+  actorDisplayName,
+  applyContactPatch,
+  contactPatchSchema,
+} from "@/lib/contacts/update"
 import { getOlderThreadMessages } from "@/lib/supabase/queries/inbox"
 import type { ThreadMessagePage } from "@/lib/supabase/queries/inbox"
-import type { TablesUpdate } from "@/types/database"
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
@@ -58,21 +61,6 @@ export async function loadOlderMessages(
 
 type ConversationStatus = "bot" | "needs_human" | "human" | "closed"
 
-/** How this teammate is named in the sentence stored on the event row. */
-async function actorName(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("profiles")
-    .select("first_name, last_name")
-    .eq("id", userId)
-    .maybeSingle()
-
-  if (!data) return null
-  return [data.first_name, data.last_name].filter(Boolean).join(" ").trim() || null
-}
-
 /**
  * Flip a conversation's status. RLS (inbox.access) gates the write — a user can
  * only touch conversations in their own orgs. Used for staff takeover
@@ -114,7 +102,7 @@ async function updateStatus(
       conversationId,
       kind: event,
       actorUserId: user.id,
-      actorName: await actorName(supabase, user.id),
+      actorName: await actorDisplayName(supabase, user.id),
     })
   }
 
@@ -154,7 +142,7 @@ export async function markConversationRead(
 ): Promise<ActionResult> {
   const parsed = conversationActionSchema.safeParse(input)
   if (!parsed.success) return { ok: false, error: "Geçersiz veri" }
-  const { conversationId, slug } = parsed.data
+  const { conversationId } = parsed.data
 
   const supabase = await createClient()
   const {
@@ -171,7 +159,10 @@ export async function markConversationRead(
     .eq("id", conversationId)
   if (error) return { ok: false, error: error.message }
 
-  revalidatePath(`/${slug}/inbox`)
+  // Deliberately no `revalidatePath`. Opening a thread already marks it read on
+  // the client (`readOverrides`), and this write carries nothing else the page
+  // renders — so invalidating the route bought a second full fetch of the list
+  // and the thread for every conversation anyone clicked on.
   return { ok: true }
 }
 
@@ -281,7 +272,7 @@ export async function sendStaffReply(
       conversationId,
       kind: "takeover",
       actorUserId: user.id,
-      actorName: await actorName(supabase, user.id),
+      actorName: await actorDisplayName(supabase, user.id),
     })
   }
 
@@ -300,24 +291,20 @@ export async function sendStaffReply(
 
 const updateContactSchema = z.object({
   contactId: z.string().uuid(),
+  /** Which thread to announce the change in — a contact may have several. */
+  conversationId: z.string().uuid(),
   slug: z.string().min(1),
-  patch: z.object({
-    firstName: z.string().trim().max(80).nullable().optional(),
-    lastName: z.string().trim().max(80).nullable().optional(),
-    email: z.string().trim().max(200).nullable().optional(),
-    nationality: z.string().trim().length(2).nullable().optional(),
-    country: z.string().trim().length(2).nullable().optional(),
-    preferredLanguage: z.enum(GUEST_LOCALES).nullable().optional(),
-    tags: z.array(z.string().trim().min(1).max(40)).max(30).optional(),
-    notes: z.string().trim().max(4000).nullable().optional(),
-  }),
+  patch: contactPatchSchema,
 })
 
 /**
- * Update a contact's unified profile from the inbox detail panel. RLS
- * (inbox.access, contacts_write_inbox) gates the write to the caller's org.
- * The `profile` jsonb merges (same semantics the assistant tool uses) so a
- * partial panel save never clobbers facts the assistant recorded, and vice versa.
+ * Update a contact's card from the inbox detail panel. RLS (inbox.access,
+ * contacts_write_inbox) gates the write to the caller's org.
+ *
+ * The write itself — including the rule that the thread line comes from
+ * diffing the row rather than from the submitted patch — lives in
+ * `applyContactPatch`, shared with the Kişiler page. What is local to the
+ * inbox is which conversation the change is announced in: the open one.
  */
 export async function updateContact(
   input: z.input<typeof updateContactSchema>
@@ -326,7 +313,7 @@ export async function updateContact(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Geçersiz veri" }
   }
-  const { contactId, slug, patch } = parsed.data
+  const { contactId, conversationId, slug, patch } = parsed.data
 
   const supabase = await createClient()
   const {
@@ -334,35 +321,13 @@ export async function updateContact(
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: "Yetkisiz" }
 
-  // `name` is derived from first/last by a DB trigger — never written here.
-  const update: TablesUpdate<"contacts"> = {}
-  if (patch.firstName !== undefined) update.first_name = patch.firstName || null
-  if (patch.lastName !== undefined) update.last_name = patch.lastName || null
-  if (patch.email !== undefined) update.email = patch.email || null
-  if (patch.nationality !== undefined) {
-    update.nationality = patch.nationality?.toUpperCase() || null
-  }
-  if (patch.country !== undefined) {
-    update.country = patch.country?.toUpperCase() || null
-  }
-  if (patch.preferredLanguage !== undefined) {
-    update.preferred_language = patch.preferredLanguage || null
-  }
-  if (patch.tags !== undefined) update.tags = patch.tags
-  if (patch.notes !== undefined) update.notes = patch.notes || null
-
-  if (Object.keys(update).length === 0) return { ok: true }
-
-  // Version signal — lets an already-open inbox panel (this staff member's or
-  // another tab's) detect the write and re-sync, even though the contact id
-  // itself didn't change.
-  update.updated_at = new Date().toISOString()
-
-  const { error } = await supabase
-    .from("contacts")
-    .update(update)
-    .eq("id", contactId)
-  if (error) return { ok: false, error: error.message }
+  const result = await applyContactPatch(supabase, {
+    contactId,
+    conversationId,
+    patch,
+    actorUserId: user.id,
+  })
+  if (!result.ok) return result
 
   revalidatePath(`/${slug}/inbox`)
   return { ok: true }

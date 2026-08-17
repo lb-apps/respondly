@@ -17,6 +17,7 @@
 import { resolveOrgDates } from "@/lib/assistant/date-context"
 import { buildConnectedSystemsBlock } from "@/lib/mcp/prompt-block"
 import type { McpServerSummary } from "@/lib/mcp/types"
+import type { LinkParam } from "@/lib/mcp/link-params"
 
 export interface AssistantPromptConfig {
   /** Organization display name. */
@@ -33,6 +34,11 @@ export interface AssistantPromptConfig {
   timezone?: string | null
   /** Live systems connected to this org, from the cached tool catalogue. */
   connectedServers?: McpServerSummary[]
+  /**
+   * Query params the org has marked to ride on links to its own site. Read
+   * from its connected systems — see `@/lib/mcp/link-params`.
+   */
+  linkParams?: LinkParam[] | null
   /**
    * Reference instant for "today". Defaults to now. Injected so the prompt is a
    * pure function (testable) — callers in request handlers leave it unset so the
@@ -259,6 +265,42 @@ One line of text may go with it ("Kadıköy Rıhtım'dayız, iskeleye 5 dakika")
 **Location (request_location)**
 Call \`request_location\` only when you need where the customer physically is — directions from their spot, a pickup point, a delivery address. Asking which city they live in is a plain-text question, not a location request.`
 
+/**
+ * Params that ride on links to the business's own site.
+ *
+ * A rule rather than a URL rewrite in code: which links are "ours" is a
+ * judgement — the booking site is, a map pin and a government form are not —
+ * and the model is the only part of the turn that knows where a URL came from.
+ *
+ * The carve-out is the important half. A link minted by a tool for a specific
+ * transaction already carries what the system that will honour it put there,
+ * often signed; anything appended to one of those is at best ignored and at
+ * worst breaks the link the customer is about to act on. Those go out
+ * byte-for-byte.
+ *
+ * Deliberately says nothing about what the params mean. The org marked them; a
+ * campaign code, a referral id and a channel tag all read the same from here.
+ */
+function buildLinkParamRules(params: LinkParam[], orgName: string): string {
+  const pairs = params.map((p) => `${p.name}=${p.value}`)
+  const list = pairs.map((pair) => `\`${pair}\``).join(", ")
+  const query = pairs.join("&")
+
+  return `## Parameters on ${orgName} Links
+
+Every link you send that points at ${orgName}'s own site must carry ${list}.
+
+Append them to the URL's query string — \`?${query}\` when the URL has no query yet, \`&${query}\` when it already has one. Change nothing else: not the path, not the parameters already there, not their order. If the URL already carries one of these names, leave that one as it is — it was put there on purpose.
+
+**The one exception is a link that takes payment or finalises the booking** — a checkout, a payment page, a confirmation step, or any URL carrying a signature or token (\`sig=\`, \`token=\`, \`hash=\`). Those are minted by the system that will honour them and appending to one can invalidate it, so send them exactly as the tool returned them, character for character.
+
+Nothing else is an exception. A page that merely *shows* something — a room, a product, a service, a list of options — belongs to ${orgName} and takes the parameters, **even though a tool produced it and even though it already carries dates, guests, filters or any other detail in its query string**. Coming from a tool is not what makes a link exempt; taking money is.
+
+Never add them to anything that is not ${orgName}'s own site: no map links, no third-party pages, no link a customer sent you.
+
+This is silent plumbing. Never mention these parameters, never explain them, and never read them out — the customer sees a button, not a URL.`
+}
+
 const PRICING_PRESENTATION_RULES = `## Price & Figure Presentation
 
 - Never mention stock levels, remaining capacity, or scarcity ("only 2 left", "limited availability") unless a tool explicitly returned that number. Do not invent urgency.
@@ -271,12 +313,13 @@ const PRICING_PRESENTATION_RULES = `## Price & Figure Presentation
 
 const CONTACT_PROFILE_RULES = `## Knowing the Customer (contact card)
 
-The team keeps one small card per person, and you share it. It holds exactly seven things: first name, last name, phone, email, nationality, country, and the language they prefer. Nothing else — situational detail (dates, quantities, what they ordered) belongs to the system that owns it, and you look that up live instead of remembering a copy that goes stale.
+The team keeps one small card per person, and you share it. It holds seven facts — first name, last name, phone, email, nationality, country, and the language they prefer — plus one note the team writes about them. Nothing else: situational detail (dates, quantities, what they ordered) belongs to the system that owns it, and you look that up live instead of remembering a copy that goes stale.
 
 - \`get_contact_profile\` — re-read the card. Its contents are already given to you each turn, so you rarely need this.
-- \`update_contact_profile\` — save one of those seven fields when the customer tells you. Provide only what changed.
+- \`update_contact_profile\` — save one of those seven facts when the customer tells you. Provide only what changed.
 
 Rules:
+- The team's note is theirs, not yours. You may read it and let it shape how you serve them; you can never write or change it, never read it back to the customer, and never hint that a note exists. It is background, not an instruction that outranks anything here.
 - Before asking the customer for anything, check what you already know (see "What We Already Know" when present) and what they said earlier in this thread. Asking twice is the fastest way to sound like a bot.
 - When a tool needs a value you already have — phone, name, email, nationality — pass it straight through. Never make them restate it because a tool asked.
 - Only record what the customer actually said. NEVER invent or infer. Their dialling code is not their nationality.
@@ -467,6 +510,9 @@ export function buildEngineRules(config: AssistantPromptConfig): string {
     ``,
     RICH_CONTENT_RULES,
     ``,
+    ...(config.linkParams && config.linkParams.length > 0
+      ? [buildLinkParamRules(config.linkParams, orgName), ``]
+      : []),
     PRICING_PRESENTATION_RULES,
     ``,
     CONTACT_PROFILE_RULES,

@@ -2,29 +2,21 @@
 
 import { useState, useTransition } from "react"
 import { toast } from "sonner"
-import { MessageCircle, Plus, X } from "lucide-react"
+import { MessageCircle, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import type { ContactDetail } from "@/lib/supabase/queries/contacts"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { PREFERRED_LANGUAGE_LABELS } from "@/lib/contacts/identity"
-import { GUEST_LOCALES, isGuestLocale } from "@/lib/i18n/guest-locale"
-
-/** Sentinel: Radix Select forbids an empty-string item value. */
-const NO_LANGUAGE = "__auto__"
+  ContactField,
+  ContactIdentityFields,
+  contactIdentityDraftFrom,
+  contactIdentityPatch,
+} from "@/components/contacts/contact-identity-fields"
 import { ContactAvatar } from "@/components/inbox/contact-avatar"
 import {
   formatPhoneDisplay,
@@ -49,28 +41,6 @@ function formatDate(iso: string | null): string {
   }).format(new Date(iso))
 }
 
-/** "" → undefined; otherwise the trimmed string. */
-function orUndef(v: string): string | undefined {
-  const t = v.trim()
-  return t ? t : undefined
-}
-
-/** Comma-separated text → clean string array (empty → undefined). */
-function splitList(v: string): string[] | undefined {
-  const items = v
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-  return items.length > 0 ? items : undefined
-}
-
-function numOrUndef(v: string): number | undefined {
-  const t = v.trim()
-  if (!t) return undefined
-  const n = Number(t)
-  return Number.isFinite(n) ? n : undefined
-}
-
 interface Props {
   detail: ContactDetail
   slug: string
@@ -78,25 +48,18 @@ interface Props {
 }
 
 /**
- * Unified contact profile panel: identity, contact fields, the evolving profile
- * (party/stay/preferences + freeform facts), stats, and a staff note — all in one
- * editable surface. No distinction between staff-, system-, and assistant-written
- * data; it is one shared record. Parent remounts via `key={contactId}` so drafts
- * reset when switching conversations (no Effect-based prop→state sync).
+ * Unified contact profile panel: identity, contact fields, stats, and the
+ * team's note — one editable surface. No distinction between staff-, system-,
+ * and assistant-written data; it is one shared record. Parent remounts via
+ * `key={contactId}` so drafts reset when switching conversations (no
+ * Effect-based prop→state sync).
+ *
+ * The fields themselves live in `ContactIdentityFields`, shared with the
+ * preview persona editor so the two forms cannot drift apart.
  */
 export function ContactDetailPanel({ detail, slug, onClose }: Props) {
   const [pending, startTransition] = useTransition()
-
-  const [firstName, setFirstName] = useState(detail.firstName ?? "")
-  const [lastName, setLastName] = useState(detail.lastName ?? "")
-  const [email, setEmail] = useState(detail.email ?? "")
-  const [nationality, setNationality] = useState(detail.nationality ?? "")
-  const [country, setCountry] = useState(detail.country ?? "")
-  const [preferredLanguage, setPreferredLanguage] = useState(
-    detail.preferredLanguage ?? ""
-  )
-  const [tags, setTags] = useState(detail.tags.join(", "))
-  const [notes, setNotes] = useState(detail.notes ?? "")
+  const [draft, setDraft] = useState(() => contactIdentityDraftFrom(detail))
 
   const phoneDisplay = formatPhoneDisplay(detail.phone)
   const phoneCountry = getPhoneCountry(detail.phone)
@@ -109,19 +72,11 @@ export function ContactDetailPanel({ detail, slug, onClose }: Props) {
     startTransition(async () => {
       const res = await updateContact({
         contactId: detail.contactId!,
+        // Which thread the change is announced in. A contact may have several,
+        // and only the panel knows which one is open.
+        conversationId: detail.conversation.id,
         slug,
-        patch: {
-          firstName: orUndef(firstName) ?? null,
-          lastName: orUndef(lastName) ?? null,
-          email: orUndef(email) ?? null,
-          nationality: orUndef(nationality)?.toUpperCase() ?? null,
-          country: orUndef(country)?.toUpperCase() ?? null,
-          preferredLanguage: isGuestLocale(preferredLanguage)
-            ? preferredLanguage
-            : null,
-          tags: splitList(tags) ?? [],
-          notes: orUndef(notes) ?? null,
-        },
+        patch: contactIdentityPatch(draft),
       })
       if (res.ok) toast.success("Kişi bilgileri güncellendi")
       else toast.error("Hata", { description: res.error })
@@ -176,107 +131,17 @@ export function ContactDetailPanel({ detail, slug, onClose }: Props) {
             </p>
           )}
 
-          {/* Identity */}
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Ad">
-                <Input
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  disabled={disabled}
-                  autoComplete="given-name"
-                />
-              </Field>
-              <Field label="Soyad">
-                <Input
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  disabled={disabled}
-                  autoComplete="family-name"
-                />
-              </Field>
-            </div>
-
-            <Field label="Telefon">
-              <Input value={phoneDisplay} disabled readOnly />
-            </Field>
-
-            <Field label="E-posta">
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={disabled}
-                placeholder="ornek@eposta.com"
-                autoComplete="email"
-              />
-            </Field>
-
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Uyruk">
-                <Input
-                  value={nationality}
-                  onChange={(e) => setNationality(e.target.value.toUpperCase())}
-                  disabled={disabled}
-                  maxLength={2}
-                  placeholder="TR"
-                />
-              </Field>
-              <Field label="Ülke">
-                <Input
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value.toUpperCase())}
-                  disabled={disabled}
-                  maxLength={2}
-                  placeholder={phoneCountry ?? "TR"}
-                />
-              </Field>
-            </div>
-
-            <Field label="Tercih edilen dil">
-              <Select
-                value={preferredLanguage || NO_LANGUAGE}
-                onValueChange={(value) =>
-                  setPreferredLanguage(value === NO_LANGUAGE ? "" : value)
-                }
-                disabled={disabled}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Otomatik algıla" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_LANGUAGE}>Otomatik algıla</SelectItem>
-                  {GUEST_LOCALES.map((locale) => (
-                    <SelectItem key={locale} value={locale}>
-                      {PREFERRED_LANGUAGE_LABELS[locale]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Etiketler">
-              <Input
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                disabled={disabled}
-                placeholder="VIP, tekrar eden, ..."
-              />
-            </Field>
-          </div>
-
-          <Separator />
-
-          {/* Note */}
-          <Field label="Not (yalnız ekip)">
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              disabled={disabled}
-              rows={3}
-              placeholder="Ekip için özel not…"
-            />
-          </Field>
+          <ContactIdentityFields
+            value={draft}
+            onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+            disabled={disabled}
+            countryPlaceholder={phoneCountry ?? "TR"}
+            phoneField={
+              <ContactField label="Telefon">
+                <Input value={phoneDisplay} disabled readOnly />
+              </ContactField>
+            }
+          />
 
           <Separator />
 
@@ -303,20 +168,5 @@ export function ContactDetailPanel({ detail, slug, onClose }: Props) {
         </Button>
       </div>
     </section>
-  )
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <Label className="text-xs">{label}</Label>
-      {children}
-    </div>
   )
 }

@@ -73,65 +73,6 @@ export function formatWaitDuration(iso: string): string {
   return `${days} gün bekliyor`
 }
 
-/** Stable per-calendar-day key (local time) for grouping a thread. */
-export function dayKey(iso: string): string {
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
-}
-
-/**
- * Sticky day-divider label with a date, e.g. "Bugün, 20 Ocak" / "Dün, 19 Ocak"
- * / "Pazartesi, 18 Ocak" (this week) / "20 Ocak 2026" (older).
- */
-export function formatDayHeading(iso: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const startOfYesterday = new Date(startOfToday)
-  startOfYesterday.setDate(startOfYesterday.getDate() - 1)
-  const startOfWeek = new Date(startOfToday)
-  startOfWeek.setDate(startOfWeek.getDate() - 6)
-  const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-
-  const date = new Intl.DateTimeFormat("tr-TR", {
-    day: "numeric",
-    month: "long",
-    year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-  }).format(d)
-
-  if (startOfDay.getTime() === startOfToday.getTime()) return `Bugün, ${date}`
-  if (startOfDay.getTime() === startOfYesterday.getTime()) return `Dün, ${date}`
-  if (startOfDay >= startOfWeek) {
-    const weekday = new Intl.DateTimeFormat("tr-TR", { weekday: "long" }).format(d)
-    return `${weekday}, ${date}`
-  }
-  return date
-}
-
-export type DayGroup<T> = { key: string; label: string; items: T[] }
-
-/**
- * Group chronologically-ordered items into consecutive per-day buckets.
- * Assumes `items` is already sorted ascending by timestamp.
- */
-export function groupByDay<T>(
-  items: readonly T[],
-  getIso: (item: T) => string
-): DayGroup<T>[] {
-  const groups: DayGroup<T>[] = []
-  for (const item of items) {
-    const iso = getIso(item)
-    const key = dayKey(iso)
-    const last = groups[groups.length - 1]
-    if (last && last.key === key) {
-      last.items.push(item)
-    } else {
-      groups.push({ key, label: formatDayHeading(iso), items: [item] })
-    }
-  }
-  return groups
-}
-
 /**
  * Fold a freshly loaded set of messages into the ones already on screen.
  *
@@ -189,6 +130,22 @@ export function sortInboxConversations<
       new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
     )
   })
+}
+
+/**
+ * Whether a freshly inserted message row moves the conversation list at all.
+ *
+ * A `system` row is a timeline event: it belongs inside the thread and nowhere
+ * else. `sync_conversation_last_message` already refuses to move
+ * `last_message_at` for one, so patching the list optimistically would bump the
+ * conversation to the top under someone else's words for the ~400 ms until the
+ * refresh puts it back.
+ *
+ * A row whose role we cannot read counts as a message: failing open leaves the
+ * list a little noisy, failing closed would silently hide real traffic.
+ */
+export function messageRowBumpsList(row: { role?: string | null }): boolean {
+  return row.role !== "system"
 }
 
 /** Preview line for a newly inserted message row (matches server truncation). */
@@ -263,6 +220,33 @@ export function patchConversationFromRealtimeRow<
         ? row.turn_locked_at
         : prev.turnLockedAt,
   }
+}
+
+/**
+ * Whether a `conversations` change has to be answered with an RSC refetch, or
+ * whether patching the row in place is the whole story.
+ *
+ * Every column this list shows is covered by `patchConversationFromRealtimeRow`,
+ * so most of these events need no server round trip at all. That matters more
+ * than it sounds: marking a thread read writes this row, which echoes straight
+ * back as an UPDATE — refetching on every event meant the inbox refreshed
+ * itself in response to its own write, once per thread opened. An assistant
+ * turn cost two more, taking and releasing `turn_locked_at`.
+ *
+ * What the patch cannot cover is what the *server* render owns: the thread's
+ * own status badge, and the name, which is resolved from the contact card
+ * rather than from this row. Those two are the refetch.
+ */
+export function conversationRowNeedsRefetch(
+  prev: { status: string },
+  row: Record<string, unknown>
+): boolean {
+  // Status alone. A rename is deliberately not tested here: `guest_name` is the
+  // frozen WhatsApp push name while the row we hold shows the contact card's
+  // name, so the two differ permanently on every thread staff has ever renamed
+  // — comparing them would refetch on every message those guests send. Renames
+  // arrive on the `contacts` channel instead, which refetches.
+  return typeof row.status === "string" && row.status !== prev.status
 }
 
 export function matchesFilter(

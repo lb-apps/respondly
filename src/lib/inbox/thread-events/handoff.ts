@@ -1,14 +1,12 @@
 /**
- * The moments a conversation changes hands, as the thread shows them.
- *
- * They are stored as `messages` rows with `role: "system"` — see the column's
- * COMMENT. That keeps one ordered stream: the thread's keyset pagination, its
- * realtime subscription and `mergeThreadMessages` all reach an event the same
- * way they reach a message, and `getConversationHistory` (guest/assistant/staff
- * only) keeps them out of the model's context.
+ * The moments a conversation changes hands.
  *
  * `closed` is deliberately not here. Closing ends a conversation rather than
  * passing it to someone, and nothing takes it back afterwards.
+ *
+ * See `./index.ts` for how these reach the thread; the storage contract they
+ * share with every other event is documented there and on the `messages.role`
+ * column COMMENT.
  */
 export type HandoffEventKind =
   | "handoff_to_human"
@@ -26,7 +24,7 @@ export interface HandoffEvent {
   reason?: HandoffReason
 }
 
-const KINDS: readonly string[] = [
+export const HANDOFF_KINDS: readonly string[] = [
   "handoff_to_human",
   "takeover",
   "returned_to_assistant",
@@ -68,20 +66,17 @@ export function handoffEventText(
 }
 
 /**
- * Read an event back out of a message's metadata.
+ * Read a handoff back out of an event payload.
  *
- * Anything unrecognised is `null`, not a guess: a row written by an older or
- * newer version of this file must render as nothing rather than as the wrong
- * event.
+ * `record` is `metadata.event`, already unwrapped and already known to carry a
+ * string `kind` — `parseThreadEvent` owns that much, because it is the part
+ * every event family has in common.
  */
-export function parseHandoffEvent(metadata: unknown): HandoffEvent | null {
-  if (typeof metadata !== "object" || metadata === null) return null
-  const event = (metadata as Record<string, unknown>).event
-  if (typeof event !== "object" || event === null) return null
-
-  const record = event as Record<string, unknown>
+export function parseHandoffPayload(
+  record: Record<string, unknown>
+): HandoffEvent | null {
   const kind = record.kind
-  if (typeof kind !== "string" || !KINDS.includes(kind)) return null
+  if (typeof kind !== "string" || !HANDOFF_KINDS.includes(kind)) return null
 
   const reason = record.reason
   return {

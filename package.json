@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --import tsx --test src/lib/knowledge/rag.test.ts src/lib/phone/phone.test.ts src/lib/whatsapp/format-text.test.ts src/lib/inbox/list-utils.test.ts src/lib/inbox/handoff-events.test.ts src/lib/inbox/pin-scroll.test.ts src/lib/mcp/mcp.test.ts src/mastra/prompt.test.ts src/lib/assistant/conversation-language.test.ts src/lib/whatsapp/choice-message.test.ts src/lib/whatsapp/carousel-message.test.ts src/lib/whatsapp/inbound-tap.test.ts src/lib/whatsapp/inbound-location.test.ts src/lib/whatsapp/cloud-api/payloads.test.ts src/lib/whatsapp/cloud-api/media-limits.test.ts src/lib/whatsapp/handoff-message.test.ts src/lib/whatsapp/ui-labels.test.ts src/lib/assistant/handoff-decision.test.ts src/lib/assistant/contact-context.test.ts src/lib/assistant/contact-locale.test.ts src/lib/whatsapp/public-url.test.ts src/lib/assistant/claim-kind.test.ts src/lib/assistant/format-text.test.ts src/lib/assistant/mention.test.ts src/lib/assistant/mentionable-tools.test.ts src/lib/assistant/tool-trace.test.ts src/lib/assistant/rich-summary.test.ts src/components/chat/message-chips.test.ts src/lib/whatsapp/cloud-api/business-profile-limits.test.ts src/lib/whatsapp/cloud-api/graph-errors.test.ts src/lib/whatsapp/profile/channel-settings.test.ts 'src/app/[slug]/channels/profile-schema.test.ts'",
+    "test": "node --import tsx --test src/lib/knowledge/rag.test.ts src/lib/phone/phone.test.ts src/lib/whatsapp/format-text.test.ts src/lib/inbox/list-utils.test.ts src/lib/chat/day-groups.test.ts src/lib/chat/thread-order.test.ts src/lib/inbox/thread-events/thread-events.test.ts src/lib/inbox/pin-scroll.test.ts src/lib/mcp/mcp.test.ts src/lib/mcp/link-params.test.ts src/mastra/prompt.test.ts src/lib/assistant/conversation-language.test.ts src/lib/whatsapp/choice-message.test.ts src/lib/whatsapp/carousel-message.test.ts src/lib/whatsapp/inbound-tap.test.ts src/lib/whatsapp/inbound-location.test.ts src/lib/whatsapp/cloud-api/payloads.test.ts src/lib/whatsapp/cloud-api/media-limits.test.ts src/lib/whatsapp/handoff-message.test.ts src/lib/whatsapp/ui-labels.test.ts src/lib/assistant/handoff-decision.test.ts src/lib/assistant/contact-context.test.ts src/lib/assistant/contact-locale.test.ts src/lib/contacts/profile-store.test.ts src/lib/assistant/preview/persona-seeds.test.ts src/lib/whatsapp/public-url.test.ts src/lib/assistant/claim-kind.test.ts src/lib/assistant/format-text.test.ts src/lib/assistant/mention.test.ts src/lib/assistant/mentionable-tools.test.ts src/lib/assistant/tool-trace.test.ts src/lib/assistant/rich-summary.test.ts src/components/chat/message-chips.test.ts src/lib/whatsapp/cloud-api/business-profile-limits.test.ts src/lib/whatsapp/cloud-api/graph-errors.test.ts src/lib/whatsapp/profile/channel-settings.test.ts 'src/app/[slug]/channels/profile-schema.test.ts'",
     "test:rag": "node --import tsx --test src/lib/knowledge/rag.test.ts",
     "reingest:knowledge": "tsx scripts/reingest-knowledge.ts"
   },
@@ -55,6 +55,7 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
+    "embla-carousel-wheel-gestures": "^8.1.0",
     "epub2": "^3.0.2",
     "framer-motion": "^12.29.2",
     "input-otp": "^1.4.2",

@@ -4,27 +4,27 @@ import { cn } from "@/lib/utils"
  * One line of a conversation: avatar, what was said, and who said it when.
  *
  * Shared by the inbox and the assistant preview so a message looks the same
- * wherever it is read. The two surfaces are mirror images — in the inbox the
- * contact is across the table, in the preview the tester *is* the contact — so
- * `side` says which edge to speak from and `speaker` says whose voice it is.
- * Colour follows the voice, never the edge: the business is always the filled
- * bubble, the contact always the outlined one.
+ * wherever it is read. The two surfaces are mirror images of each other — in the
+ * inbox you are the business answering a guest, in the preview you are the guest
+ * testing the assistant — and the reader is always the one typing.
+ *
+ * **Colour follows the edge:** whatever is sent from this surface is the filled
+ * bubble on the right, whatever arrives is the outlined one on the left. That is
+ * the same rule every chat app has trained people on, and it means `side` alone
+ * decides the colour — there is no second input to get out of step with it.
  */
 
 export type MessageSide = "start" | "end"
-export type MessageSpeaker = "contact" | "business"
 
 /**
  * The bubble, with its corner cut on the side it is spoken from — the tail that
  * points back at the speaker's avatar.
  */
 export function Bubble({
-  speaker,
   side,
   className,
   children,
 }: {
-  speaker: MessageSpeaker
   side: MessageSide
   className?: string
   children: React.ReactNode
@@ -36,8 +36,10 @@ export function Bubble({
         // The tail corner is tucked in, not squared off: a hard 90° reads as a
         // clipping mistake at this size, while a small radius still points.
         side === "start" ? "rounded-bl-sm" : "rounded-br-sm",
-        speaker === "business"
-          ? "bg-primary text-primary-foreground"
+        // Colour separates the two sides; it does not rank them. Neither half of
+        // a conversation is a call to action, so neither wears `--primary`.
+        side === "end"
+          ? "bg-bubble-sent text-bubble-sent-foreground"
           : "border-border bg-card text-card-foreground border",
         className
       )}

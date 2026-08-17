@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState } from "react"
-import { MessageCircle, Plus } from "lucide-react"
+import { useMemo, useRef, useState } from "react"
+import { Plus } from "lucide-react"
 import type { UIMessage } from "ai"
 import useSWR from "swr"
 import { toast } from "sonner"
@@ -14,15 +14,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { ChatMessageBubble } from "@/components/chat/chat-message-bubble"
-import { useUser } from "@/contexts/user-context"
-import {
-  ThreadColumn,
-  ThreadScroller,
-  ThreadTypingIndicator,
-} from "@/components/chat/thread-surface"
-import type { ChatAttachmentView } from "@/components/chat/chat-attachments"
+import { ThreadView } from "@/components/chat/thread-view"
 import { createClient } from "@/lib/supabase/client"
 import { CHAT_ATTACHMENTS_BUCKET } from "@/lib/assistant/attachments/constants"
 import { fileExtOf, mimeForFileExt } from "@/lib/knowledge/file-upload"
@@ -40,17 +32,15 @@ import {
 import { PreviewComposer } from "../preview-composer"
 import { PreviewHistory } from "../preview-history"
 import { usePreviewConversation } from "../use-preview-conversation"
-
-function extractTextParts(parts: unknown[]): string {
-  return parts
-    .filter(
-      (p): p is Record<string, unknown> =>
-        typeof p === "object" && p !== null && (p as Record<string, unknown>).type === "text"
-    )
-    .map((p) => (typeof p.text === "string" ? p.text : ""))
-    .filter(Boolean)
-    .join("\n\n")
-}
+import { useMessageTimestamps } from "../use-message-timestamps"
+import type { PreviewPersona } from "@/lib/supabase/queries/preview-personas"
+import { PersonaPicker } from "./persona-picker"
+import { PersonaBadge } from "./persona-badge"
+import { PersonaEditorSheet } from "./persona-editor-sheet"
+import { personaDisplayName, personaLanguageLabel } from "./persona-identity"
+import { liveEventRow, livePreviewThreadRows, previewThreadRows } from "./thread-rows"
+import type { ThreadRow } from "@/components/chat/thread-view"
+import { formatPhoneDisplay } from "@/lib/phone"
 
 function relativeTime(iso: string): string {
   const ts = new Date(iso).getTime()
@@ -78,27 +68,33 @@ function mimeForAttachment(file: File): string {
 export function PreviewPageClient({
   slug,
   organizationId,
-  orgName,
   assistantId,
+  personas: initialPersonas,
 }: {
   slug: string
   organizationId: string
-  orgName: string
   assistantId: string | null
+  personas: PreviewPersona[]
 }) {
-  // The tester's own identity: in the preview they are the one playing the
-  // guest, so their messages carry their face, not a placeholder's.
-  const { user } = useUser()
-  const author = {
-    name: [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || null,
-    avatarUrl: user.avatar_url,
-  }
+  const timeOf = useMessageTimestamps()
   const sessionIdRef = useRef<string | null>(null)
   const backfillDoneRef = useRef(false)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(null)
   const [sheetSource, setSheetSource] = useState<SourceDetail | null>(null)
   const [highlightQuery, setHighlightQuery] = useState("")
+
+  // Personas arrive from the server and only change when this page edits one,
+  // so they live in state here rather than behind another round trip.
+  const [personas, setPersonas] = useState(initialPersonas)
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
+    initialPersonas[0]?.id ?? null
+  )
+  const [editingPersona, setEditingPersona] = useState<PreviewPersona | null>(null)
+  const [editorOpen, setEditorOpen] = useState(false)
+
+  const activePersona =
+    personas.find((p) => p.id === selectedPersonaId) ?? null
 
   const {
     data: sessions = [],
@@ -133,6 +129,7 @@ export function PreviewPageClient({
     scheduleAssistantReply,
     resetConversation,
     bindSession,
+    events,
   } = usePreviewConversation({
     assistantId,
     organizationId,
@@ -152,13 +149,63 @@ export function PreviewPageClient({
     () => getPreviewThreadAction(viewingSessionId!)
   )
 
-  const canChat = !!assistantId
+  // A persona is locked into the session on the first message, so the picker
+  // only decides anything while the thread is still empty.
+  const canChat = !!assistantId && !!selectedPersonaId
   const viewingPast = viewingSessionId !== null
+
+  // The thread the shared view draws. Events sit among the messages in time
+  // order — they belong to the moment the assistant learned something, not to
+  // the end of the conversation.
+  const liveRows = useMemo(() => {
+    const speaker = activePersona
+      ? { name: personaDisplayName(activePersona), phone: activePersona.phone }
+      : null
+    return [
+      ...livePreviewThreadRows(messages, speaker, timeOf),
+      ...events
+        .map((e) => liveEventRow(e))
+        .filter((row): row is ThreadRow => row !== null),
+    ].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }, [messages, activePersona, timeOf, events])
+
+  const pastRows = useMemo(() => {
+    const persona = pastThread?.session.persona
+    return previewThreadRows(pastThread?.messages ?? [], {
+      // A finished session shows the number it ran against; the name it may
+      // have learned lives in the messages themselves.
+      name: persona?.phone ? formatPhoneDisplay(persona.phone) : null,
+      phone: persona?.phone ?? null,
+    })
+  }, [pastThread])
 
   function startNewSession() {
     syncSessionId(null)
     resetConversation()
     setViewingSessionId(null)
+  }
+
+  function handlePersonaSaved(saved: PreviewPersona) {
+    setPersonas((prev) => {
+      const known = prev.some((p) => p.id === saved.id)
+      return known ? prev.map((p) => (p.id === saved.id ? saved : p)) : [...prev, saved]
+    })
+    setSelectedPersonaId(saved.id)
+  }
+
+  function handlePersonaDeleted(personaId: string) {
+    setPersonas((prev) => {
+      const next = prev.filter((p) => p.id !== personaId)
+      setSelectedPersonaId((current) =>
+        current === personaId ? (next[0]?.id ?? null) : current
+      )
+      return next
+    })
+  }
+
+  function openPersonaEditor(persona: PreviewPersona | null) {
+    setEditingPersona(persona)
+    setEditorOpen(true)
   }
 
   async function handleSourceClick(sourceId: string) {
@@ -183,7 +230,11 @@ export function PreviewPageClient({
 
     let sid = sessionIdRef.current
     if (!sid) {
-      const created = await createPreviewSessionAction(assistantId, organizationId)
+      const created = await createPreviewSessionAction({
+        assistantId,
+        organizationId,
+        personaId: selectedPersonaId,
+      })
       if (!created.ok) {
         toast.error("Oturum açılamadı", { description: created.error })
         return
@@ -257,7 +308,9 @@ export function PreviewPageClient({
   return (
     <>
       <div className="absolute inset-0 flex flex-col overflow-hidden">
-        {/* Header strip */}
+        {/* One header, not two: the breadcrumb already names this page, so a
+            title repeating it under its own rule was a band of chrome that said
+            nothing and took height from the thread. */}
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Breadcrumb>
@@ -271,29 +324,18 @@ export function PreviewPageClient({
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
-        </header>
 
-        {/* Title row */}
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-5">
-          <div className="space-y-0.5">
-            <h1 className="text-xl font-semibold tracking-tight">Önizleme</h1>
-            <p className="text-sm text-muted-foreground">
-              {assistantId
-                ? "Asistanı test et ve konuşmaları incele"
-                : "Önce Ayarlar sayfasında asistan oluştur"}
-            </p>
-          </div>
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0 gap-1.5"
+            className="ml-auto shrink-0 gap-1.5"
             onClick={startNewSession}
             disabled={!assistantId}
           >
             <Plus className="size-4" />
             Yeni Konuşma
           </Button>
-        </div>
+        </header>
 
         {/* Body: two columns */}
         <div className="flex min-h-0 flex-1">
@@ -308,53 +350,21 @@ export function PreviewPageClient({
           <div className="bg-background flex min-h-0 min-w-0 flex-1 flex-col">
             {viewingPast ? (
               <>
-                <ThreadScroller>
-                  {threadLoading ? (
-                    <ThreadColumn className="gap-5">
-                      <div className="flex flex-col gap-2">
-                        <Skeleton className="h-4 w-16 rounded-full" />
-                        <Skeleton className="h-14 w-3/4 rounded-2xl" />
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <Skeleton className="h-4 w-12 rounded-full" />
-                        <Skeleton className="h-10 w-2/3 rounded-2xl" />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <Skeleton className="h-4 w-16 rounded-full" />
-                        <Skeleton className="h-20 w-4/5 rounded-2xl" />
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <Skeleton className="h-4 w-12 rounded-full" />
-                        <Skeleton className="h-10 w-1/2 rounded-2xl" />
-                      </div>
-                    </ThreadColumn>
-                  ) : (
-                    <ThreadColumn className="min-w-0 gap-5">
-                      {(pastThread?.messages ?? []).map((m) => {
-                        const attViews: ChatAttachmentView[] = m.attachments.map((a) => ({
-                          id: a.id,
-                          kind: a.kind as "image" | "document",
-                          filename: a.filename,
-                          mimeType: a.mimeType,
-                          signedUrl: a.signedUrl,
-                        }))
-                        return (
-                          <ChatMessageBubble
-                            key={m.id}
-                            role={m.role === "user" ? "user" : "assistant"}
-                            text={m.body}
-                            parts={m.parts ?? []}
-                            attachments={attViews}
-                            createdAt={m.createdAt}
-                            author={author}
-                            onSourceClick={handleSourceClick}
-                            onConflictSourceClick={handleConflictSourceClick}
-                          />
-                        )
-                      })}
-                    </ThreadColumn>
-                  )}
-                </ThreadScroller>
+                <PersonaBadge
+                  label={pastThread?.session.persona?.label ?? null}
+                  name={
+                    pastThread?.session.persona?.phone
+                      ? formatPhoneDisplay(pastThread.session.persona.phone)
+                      : null
+                  }
+                  phone={pastThread?.session.persona?.phone ?? null}
+                />
+                <ThreadView
+                  rows={pastRows}
+                  loading={threadLoading}
+                  onSourceClick={handleSourceClick}
+                  onConflictSourceClick={handleConflictSourceClick}
+                />
                 <div className="bg-background shrink-0 border-t px-6 py-2.5">
                   <p className="text-muted-foreground text-xs">
                     Geçmiş oturum
@@ -366,40 +376,35 @@ export function PreviewPageClient({
               </>
             ) : (
               <>
+                <PersonaBadge
+                  label={activePersona?.label ?? null}
+                  name={activePersona ? personaDisplayName(activePersona) : null}
+                  phone={activePersona?.phone ?? null}
+                  language={
+                    activePersona ? personaLanguageLabel(activePersona) : null
+                  }
+                  onChange={messages.length > 0 ? startNewSession : undefined}
+                />
+
                 {messages.length === 0 ? (
-                  <div className="bg-sidebar flex min-h-0 flex-1 items-center justify-center">
-                    <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="bg-muted flex size-16 items-center justify-center rounded-2xl">
-                        <MessageCircle className="text-muted-foreground size-7" />
-                      </div>
-                      <p className="text-muted-foreground max-w-[200px] text-sm leading-relaxed">
-                        Asistana mesaj göndererek konuşmayı başlat
-                      </p>
-                    </div>
-                  </div>
+                  <PersonaPicker
+                    personas={personas}
+                    selectedPersonaId={selectedPersonaId}
+                    onSelect={setSelectedPersonaId}
+                    onEdit={openPersonaEditor}
+                    onCreate={() => openPersonaEditor(null)}
+                  />
                 ) : (
-                  <ThreadScroller>
-                    <ThreadColumn className="min-w-0 gap-5">
-                      {(() => {
-                        return messages.map((m) => (
-                          <ChatMessageBubble
-                            key={m.id}
-                            role={m.role}
-                            text={extractTextParts(m.parts as unknown[])}
-                            parts={m.parts as unknown[]}
-                            author={author}
-                            onSourceClick={handleSourceClick}
-                            onConflictSourceClick={handleConflictSourceClick}
-                            onQuickReplyClick={(label) =>
-                              void handleSend({ text: label, files: [] })
-                            }
-                            quickReplyDisabled={!canChat}
-                          />
-                        ))
-                      })()}
-                      {busy && <ThreadTypingIndicator side="start" />}
-                    </ThreadColumn>
-                  </ThreadScroller>
+                  <ThreadView
+                    rows={liveRows}
+                    // The assistant answers from the left here, so that is where
+                    // "yazıyor…" belongs.
+                    typingSide={busy ? "start" : null}
+                    onSourceClick={handleSourceClick}
+                    onConflictSourceClick={handleConflictSourceClick}
+                    onQuickReply={(label) => void handleSend({ text: label, files: [] })}
+                    quickReplyDisabled={!canChat}
+                  />
                 )}
 
                 <PreviewComposer
@@ -413,6 +418,15 @@ export function PreviewPageClient({
           </div>
         </div>
       </div>
+
+      <PersonaEditorSheet
+        open={editorOpen}
+        persona={editingPersona}
+        organizationId={organizationId}
+        onOpenChange={setEditorOpen}
+        onSaved={handlePersonaSaved}
+        onDeleted={handlePersonaDeleted}
+      />
 
       <SourceDetailSheet
         source={sheetSource}

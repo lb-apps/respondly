@@ -7,6 +7,16 @@ export function formatClockTr(iso: string): string {
   }).format(new Date(iso))
 }
 
+/** tr-TR date alone: "4 Haz 2026". */
+export function formatDateTr(iso: string | null): string {
+  if (!iso) return "—"
+  return new Intl.DateTimeFormat("tr-TR", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(iso))
+}
+
 /** tr-TR: "4 Haz 2026, 10:27" — locale equivalent of "Jun 4, 2026, 10:27 AM". */
 export function formatDateTimeTr(iso: string | null): string {
   if (!iso) return "—"

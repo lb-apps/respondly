@@ -10,7 +10,8 @@ type DB = SupabaseClient<Database>
 export const MCP_SERVER_PUBLIC_COLUMNS =
   "id, organization_id, name, slug, url, transport, auth_kind, auth_header_name, headers, query_params, enabled, status, error, tools, tools_synced_at, timeout_ms, created_at, updated_at"
 
-function toStringRecord(value: unknown): Record<string, string> {
+/** A jsonb column of string→string, normalised. Shared with the queries layer. */
+export function toStringRecord(value: unknown): Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {}
   }

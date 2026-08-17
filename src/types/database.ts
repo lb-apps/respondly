@@ -179,6 +179,7 @@ export type Database = {
           body: string
           created_at: string
           id: string
+          metadata: Json
           organization_id: string
           parts: Json | null
           role: string
@@ -188,6 +189,7 @@ export type Database = {
           body?: string
           created_at?: string
           id?: string
+          metadata?: Json
           organization_id: string
           parts?: Json | null
           role: string
@@ -197,6 +199,7 @@ export type Database = {
           body?: string
           created_at?: string
           id?: string
+          metadata?: Json
           organization_id?: string
           parts?: Json | null
           role?: string
@@ -219,6 +222,68 @@ export type Database = {
           },
         ]
       }
+      assistant_preview_personas: {
+        Row: {
+          country: string | null
+          created_at: string
+          email: string | null
+          first_name: string | null
+          id: string
+          label: string
+          last_name: string | null
+          nationality: string | null
+          notes: string | null
+          organization_id: string
+          phone: string
+          preferred_language: string | null
+          sort_order: number
+          tags: string[]
+          updated_at: string
+        }
+        Insert: {
+          country?: string | null
+          created_at?: string
+          email?: string | null
+          first_name?: string | null
+          id?: string
+          label: string
+          last_name?: string | null
+          nationality?: string | null
+          notes?: string | null
+          organization_id: string
+          phone: string
+          preferred_language?: string | null
+          sort_order?: number
+          tags?: string[]
+          updated_at?: string
+        }
+        Update: {
+          country?: string | null
+          created_at?: string
+          email?: string | null
+          first_name?: string | null
+          id?: string
+          label?: string
+          last_name?: string | null
+          nationality?: string | null
+          notes?: string | null
+          organization_id?: string
+          phone?: string
+          preferred_language?: string | null
+          sort_order?: number
+          tags?: string[]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assistant_preview_personas_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       assistant_preview_sessions: {
         Row: {
           assistant_id: string
@@ -227,6 +292,8 @@ export type Database = {
           id: string
           last_message_at: string
           organization_id: string
+          persona_id: string | null
+          persona_snapshot: Json | null
           title: string | null
         }
         Insert: {
@@ -236,6 +303,8 @@ export type Database = {
           id?: string
           last_message_at?: string
           organization_id: string
+          persona_id?: string | null
+          persona_snapshot?: Json | null
           title?: string | null
         }
         Update: {
@@ -245,6 +314,8 @@ export type Database = {
           id?: string
           last_message_at?: string
           organization_id?: string
+          persona_id?: string | null
+          persona_snapshot?: Json | null
           title?: string | null
         }
         Relationships: [
@@ -260,6 +331,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assistant_preview_sessions_persona_id_fkey"
+            columns: ["persona_id"]
+            isOneToOne: false
+            referencedRelation: "assistant_preview_personas"
             referencedColumns: ["id"]
           },
         ]
@@ -810,6 +888,7 @@ export type Database = {
           error: string | null
           headers: Json
           id: string
+          link_params: string[]
           name: string
           organization_id: string
           query_params: Json
@@ -831,6 +910,7 @@ export type Database = {
           error?: string | null
           headers?: Json
           id?: string
+          link_params?: string[]
           name: string
           organization_id: string
           query_params?: Json
@@ -852,6 +932,7 @@ export type Database = {
           error?: string | null
           headers?: Json
           id?: string
+          link_params?: string[]
           name?: string
           organization_id?: string
           query_params?: Json

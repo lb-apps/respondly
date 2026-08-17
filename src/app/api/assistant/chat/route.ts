@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     return new Response("Yetkisiz", { status: 401 })
   }
 
-  const message = await generatePreviewAssistantReply(supabase, {
+  const turn = await generatePreviewAssistantReply(supabase, {
     assistantId,
     sessionId,
   }).catch((err: unknown) => {
@@ -49,15 +49,16 @@ export async function POST(req: Request) {
     return { error: detail } as const
   })
 
-  if (!message || "error" in message) {
-    const detail =
-      message && "error" in message ? message.error : "Yanıt üretilemedi"
-    return new Response(detail, { status: 502 })
+  if ("error" in turn) {
+    return new Response(turn.error, { status: 502 })
+  }
+  if (!turn.message) {
+    return new Response("Yanıt üretilemedi", { status: 502 })
   }
 
   // Auto-title after the first complete exchange — non-blocking, runs after the response
   // flushes. The helper is idempotent (no-op once a title exists), so firing every turn is safe.
-  const assistantText = firstText(message.parts)
+  const assistantText = firstText(turn.message.parts)
   after(async () => {
     try {
       await generateSessionTitleIfMissing(supabase, sessionId, { assistantText })
@@ -66,5 +67,7 @@ export async function POST(req: Request) {
     }
   })
 
-  return Response.json({ message })
+  // `events` rides along so the live thread can show what the turn learned about
+  // the person without going back to the database for it.
+  return Response.json({ message: turn.message, events: turn.events })
 }

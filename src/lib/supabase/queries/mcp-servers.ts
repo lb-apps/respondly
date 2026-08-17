@@ -1,9 +1,10 @@
 import { cache } from "react"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
-import { MCP_SERVER_PUBLIC_COLUMNS } from "@/lib/mcp/config"
+import { MCP_SERVER_PUBLIC_COLUMNS, toStringRecord } from "@/lib/mcp/config"
 import { toolSummariesFromCache } from "@/lib/mcp/tool-cache"
 import type { McpServerSummary } from "@/lib/mcp/types"
+import { linkParamsFrom, type LinkParam } from "@/lib/mcp/link-params"
 import type { Database, McpServer } from "@/types/database"
 
 /** A row plus the derived flags the UI needs. Secret ids never leave the server. */
@@ -70,4 +71,33 @@ export async function getMcpToolCatalogue(
       tools: toolSummariesFromCache(row.tools),
     }))
     .filter((server) => server.tools.length > 0)
+}
+
+/**
+ * The params the org has marked to ride on links to its own site.
+ *
+ * Its own query rather than a field on the tool catalogue: that one drops
+ * servers whose tools have not been discovered yet, and a marked param is still
+ * marked on a server the assistant cannot call today.
+ */
+export async function getLinkParams(
+  supabase: SupabaseClient<Database>,
+  organizationId: string
+): Promise<LinkParam[]> {
+  const { data, error } = await supabase
+    .from("mcp_servers")
+    .select("query_params, link_params")
+    .eq("organization_id", organizationId)
+    .eq("enabled", true)
+    // Same order the catalogue uses, so a repeated name resolves to the same
+    // server in both places and the cached prompt does not flip between turns.
+    .order("created_at", { ascending: true })
+
+  if (error || !data) return []
+  return linkParamsFrom(
+    data.map((row) => ({
+      queryParams: toStringRecord(row.query_params),
+      linkParams: row.link_params,
+    }))
+  )
 }
