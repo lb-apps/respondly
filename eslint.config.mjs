@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // design-sync working tree: the staged converter, its build output, and the
+    // generated package/docs it feeds on. Only .design-sync/previews/ is source
+    // we own, and it targets design-sync's own esbuild pipeline, not Next.
+    ".ds-sync/**",
+    "ds-bundle/**",
+    ".design-sync/**",
   ]),
 ]);
 
