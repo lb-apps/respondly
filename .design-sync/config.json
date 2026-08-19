@@ -1,0 +1,82 @@
+{
+  "projectId": "7afbe306-f980-48a3-85b1-6d07ef092372",
+  "shape": "package",
+  "pkg": "respondly",
+  "globalName": "Respondly",
+  "entry": ".design-sync/pkg/index.ts",
+  "srcDir": "../../src/components/ui",
+  "tsconfig": "../../tsconfig.json",
+  "cssEntry": "styles.css",
+  "buildCmd": "node .design-sync/build-css.mjs && node .design-sync/build-fonts.mjs && node .design-sync/build-pkg.mjs && node .design-sync/build-docs.mjs",
+  "docsDir": "../../.design-sync/docs",
+  "extraFonts": [
+    "../../.design-sync/fonts/inter.css"
+  ],
+  "overrides": {
+    "Dialog": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "AlertDialog": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Sheet": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Drawer": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Popover": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "DropdownMenu": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "ContextMenu": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Menubar": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "HoverCard": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Command": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "AppSheet": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Select": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "Combobox": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    },
+    "NavigationMenu": {
+      "cardMode": "single",
+      "viewport": "760x560"
+    }
+  },
+  "extraEntries": [
+    "recharts",
+    "react-hook-form"
+  ],
+  "readmeHeader": ".design-sync/conventions.md"
+}
